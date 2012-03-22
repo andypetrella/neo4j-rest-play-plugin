@@ -33,8 +33,6 @@ class Neo4JService {
   lazy val neoRestRel = neoRestBase / "relationship"
   lazy val neoRestCypher = neoRestBase / "cypher"
 
-  def selfRestUriToId(uri: String) = uri.substring(uri.lastIndexOf('/') + 1).toInt
-
   def neoRestNodeIndex(indexName: String) = neoRestBase / "index" / "node" / indexName
 
   def neoRestNodeById(id: Int) = neoRestNode / id.toString
@@ -81,6 +79,35 @@ class Neo4JService {
       {case j:JsObject => Node(j)}
     }
   )
+
+  def properties(node:Node, props:Option[JsObject]):Neo4JElement[_] = {
+    props match {
+      case None => Http(
+          (buildUrl(node.properties))
+            <:< Map("Accept" -> "application/json")
+            |>! {
+            {case j:JsObject => node.copy(node.jsValue ++ JsObject(Seq("data" -> j)))}
+          }
+        )
+      case Some(p) => {
+        case JsObject(x :: Nil) =>  Http(
+          (buildUrl(node.property replace ("{key}", x._1)) << (stringify(x._2), "application/json") )
+            <:< Map("Accept" -> "application/json")
+            |>! {
+            {case j:JsObject => node.copy(node.jsValue ++ JsObject(Seq("data" -> j)))}
+          }
+        )
+        case o => Http(
+          (buildUrl(node.properties) << (stringify(o), "application/json") )
+            <:< Map("Accept" -> "application/json")
+            |>! {
+            {case j:JsObject => node.copy(node.jsValue ++ JsObject(Seq("data" -> j)))}
+          }
+        )
+      }
+    }
+  }
+
 
   def deleteNode(id: Int): Neo4JElement[_] = Http((((neoRestNodeById(id) DELETE) >|) ~> {u => Empty()}) >! {
     case e => {

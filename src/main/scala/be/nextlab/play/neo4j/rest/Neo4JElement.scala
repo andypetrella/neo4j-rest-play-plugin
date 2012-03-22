@@ -5,66 +5,67 @@ import play.api.libs.json._
 /**
  * User: andy
  */
-abstract class Neo4JElement[Js <: JsValue] {
+sealed abstract class Neo4JElement[Js <: JsValue] {
   val jsValue:Js
 }
 
 case class Root(jsValue:JsObject) extends Neo4JElement[JsObject] {
 
-  lazy val neo4jVersion       = jsValue \ "neo4j_version"
+  lazy val neo4jVersion       = (jsValue \ "neo4j_version").as[String]
 
-  lazy val referenceNode      = jsValue \ "reference_node"
+  lazy val referenceNode      = (jsValue \ "reference_node").as[String]
 
-  lazy val node               = jsValue \ "node"
-  lazy val relationshipTypes  = jsValue \ "relationship_types"
+  lazy val node               = (jsValue \ "node").as[String]
+  lazy val relationshipTypes  = (jsValue \ "relationship_types").as[String]
 
-  lazy val nodeIndex          = jsValue \ "node_index"
-  lazy val relationshipIndex  = jsValue \ "relationship_index"
+  lazy val nodeIndex          = (jsValue \ "node_index").as[String]
+  lazy val relationshipIndex  = (jsValue \ "relationship_index").as[String]
 
-  lazy val batch              = jsValue \ "batch"
+  lazy val batch              = (jsValue \ "batch").as[String]
 
-  lazy val cypher             = jsValue \ "cypher"
+  lazy val cypher             = (jsValue \ "cypher").as[String]
 
-  lazy val extensionsInfo     = jsValue \ "extensions_info"
+  lazy val extensionsInfo     = (jsValue \ "extensions_info").as[String]
 
-  lazy val extensions         = jsValue \ "extensions"
+  lazy val extensions         = (jsValue \ "extensions").as[JsObject]
 
 }
 
 case class Node(jsValue:JsObject) extends Neo4JElement[JsObject] {
 
   //url to it self
-  lazy val self                         = jsValue \ "self"
+  lazy val self                         = (jsValue \ "self").as[String]
   //object holding properties
-  lazy val data                         = jsValue \ "data" //
+  lazy val data                         = (jsValue \ "data").as[JsObject]
 
-  lazy val traverse                     = jsValue \ "traverse"
-  lazy val pagedTraverse                = jsValue \ "paged_traverse"
+  lazy val traverse                     = (jsValue \ "traverse").as[String]
+  lazy val pagedTraverse                = (jsValue \ "paged_traverse").as[String]
 
-  lazy val allRelationships             = jsValue \ "all_relationships"
-  lazy val allTypedRelationships        = jsValue \ "all_typed_relationships"
-  lazy val incomingRelationships        = jsValue \ "incoming_relationships"
-  lazy val incomingTypedRelationships   = jsValue \ "incoming_typed_relationships"
-  lazy val outgoingRelationships        = jsValue \ "outgoing_relationships"
-  lazy val outgoingTypedRelationships   = jsValue \ "outgoing_typed_relationships"
+  lazy val allRelationships             = (jsValue \ "all_relationships").as[String]
+  lazy val allTypedRelationships        = (jsValue \ "all_typed_relationships").as[String]
+  lazy val incomingRelationships        = (jsValue \ "incoming_relationships").as[String]
+  lazy val incomingTypedRelationships   = (jsValue \ "incoming_typed_relationships").as[String]
+  lazy val outgoingRelationships        = (jsValue \ "outgoing_relationships").as[String]
+  lazy val outgoingTypedRelationships   = (jsValue \ "outgoing_typed_relationships").as[String]
 
-  lazy val createRelationship           = jsValue \ "create_relationship"
+  lazy val createRelationship           = (jsValue \ "create_relationship").as[String]
 
-  lazy val property                     = jsValue \ "property"
-  lazy val properties                   = jsValue \ "properties"
+  lazy val property                     = (jsValue \ "property").as[String]
+  lazy val properties                   = (jsValue \ "properties").as[String]
 
-  lazy val extensions                   = jsValue \ "extensions"
+  lazy val extensions                   = (jsValue \ "extensions").as[JsObject]
 
   def ++ (el:Node) = Node(jsValue ++ el.jsValue)
 
+  def id = self.substring(self.lastIndexOf('/') + 1).toInt
 }
 
 case class Failure(jsValue:JsObject) extends Neo4JElement[JsObject] {
 
-  lazy val message                      = jsValue \ "message"
-  lazy val exception                    = jsValue \ "exception"
+  lazy val message                      = (jsValue \ "message").as[String]
+  lazy val exception                    = (jsValue \ "exception").as[String]
 
-  lazy val stacktrace                   = jsValue \ "stacktrace" //String list
+  lazy val stacktrace                   = (jsValue \ "stacktrace").as[List[String]]
 
 }
 
