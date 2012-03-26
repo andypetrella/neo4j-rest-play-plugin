@@ -1,15 +1,19 @@
 package be.nextlab.play.neo4j.rest
 
+import scalaz.Monoid
 import play.api.libs.json._
 
 /**
  * User: andy
  */
-sealed abstract class Neo4JElement[Js <: JsValue] {
+sealed abstract class Neo4JElement {
+  type Js <: JsValue
+
   val jsValue:Js
 }
 
-case class Root(jsValue:JsObject) extends Neo4JElement[JsObject] {
+case class Root(jsValue:JsObject) extends Neo4JElement {
+  type Js = JsObject
 
   lazy val neo4jVersion       = (jsValue \ "neo4j_version").as[String]
 
@@ -31,7 +35,8 @@ case class Root(jsValue:JsObject) extends Neo4JElement[JsObject] {
 
 }
 
-case class Node(jsValue:JsObject) extends Neo4JElement[JsObject] {
+case class Node(jsValue:JsObject) extends Neo4JElement {
+  type Js = JsObject
 
   //url to it self
   lazy val self                         = (jsValue \ "self").as[String]
@@ -60,7 +65,17 @@ case class Node(jsValue:JsObject) extends Neo4JElement[JsObject] {
   def id = self.substring(self.lastIndexOf('/') + 1).toInt
 }
 
-case class Failure(jsValue:JsObject) extends Neo4JElement[JsObject] {
+object Node {
+  implicit object monoid extends Monoid[Node] {
+    def append(s1: Node, s2: => Node) = s1 ++ s2
+
+    val zero = Node(JsObject(Seq("data" -> JsObject(Seq()))))
+  }
+}
+
+case class Failure(jsValue:JsObject) extends Neo4JElement {
+  type Js = JsObject
+
 
   lazy val message                      = (jsValue \ "message").as[String]
   lazy val exception                    = (jsValue \ "exception").as[String]
@@ -70,7 +85,8 @@ case class Failure(jsValue:JsObject) extends Neo4JElement[JsObject] {
 }
 
 
-case class Empty() extends Neo4JElement[JsValue] {
-  lazy val jsValue = JsNull
+case class Empty() extends Neo4JElement {
+  type Js = JsNull.type
 
+  lazy val jsValue = JsNull
 }

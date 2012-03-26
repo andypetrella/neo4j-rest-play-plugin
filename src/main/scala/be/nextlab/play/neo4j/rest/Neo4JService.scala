@@ -41,11 +41,11 @@ class Neo4JService {
 
   def buildUrl(u: String) = neo4jPlugin.createRequest(Left(u))
 
-  lazy val root: Neo4JElement[_] = Http(neoRestBase <:< Map("Accept" -> "application/json") |>! {
+  lazy val root: Neo4JElement = Http(neoRestBase <:< Map("Accept" -> "application/json") |>! {
     {case j:JsObject => Root(j)}
   })
 
-  def getNode(id: Int): Neo4JElement[_] = {
+  def getNode(id: Int): Neo4JElement = {
     Http((neoRestNodeById(id) <:< Map("Accept" -> "application/json") |>! ({case j:JsObject => Node(j)})) >! {
       case e => {
         //todo find the type of the exception thrown for a 404 => node not existing
@@ -64,7 +64,7 @@ class Neo4JService {
     })
   }
 
-  def createNode: Neo4JElement[_] = Http(
+  def createNode: Neo4JElement = Http(
     (neoRestNode POST)
       <:< Map("Accept" -> "application/json")
       |>! {
@@ -72,7 +72,7 @@ class Neo4JService {
     }
   )
 
-  def createNode(properties: JsObject): Neo4JElement[_] = Http(
+  def createNode(properties: JsObject): Neo4JElement = Http(
     (neoRestNode <<(stringify(properties), "application/json"))
       <:< Map("Accept" -> "application/json")
       |>! {
@@ -80,8 +80,9 @@ class Neo4JService {
     }
   )
 
-  def properties(node:Node, props:Option[JsObject]):Neo4JElement[_] = {
-    props match {
+  def properties(node:Node, props:Option[JsObject]):Neo4JElement = {
+    Node(JsObject(Seq()))
+    /*todo props match {
       case None => Http(
           (buildUrl(node.properties))
             <:< Map("Accept" -> "application/json")
@@ -105,11 +106,11 @@ class Neo4JService {
           }
         )
       }
-    }
+    }*/
   }
 
 
-  def deleteNode(id: Int): Neo4JElement[_] = Http((((neoRestNodeById(id) DELETE) >|) ~> {u => Empty()}) >! {
+  def deleteNode(id: Int): Neo4JElement = Http((((neoRestNodeById(id) DELETE) >|) ~> {u => Empty()}) >! {
     case e => {
       //todo find the type of the exception thrown for a 404 => node not existing
 

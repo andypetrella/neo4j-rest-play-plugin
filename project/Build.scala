@@ -9,9 +9,15 @@ object MinimalBuild extends Build {
   lazy val typesafe = "Typesafe Repository" at "http://repo.typesafe.com/typesafe/releases/"
   lazy val repo = if (buildVersion.endsWith("SNAPSHOT")) typesafeSnapshot else typesafe
 
+  val scalazVersionNumber = "6.0.3"
+  val scalaz = "org.scalaz" %% "scalaz-core" % scalazVersionNumber withSources
+
   val libDependencies = Seq(
     "play" %% "play" % "2.0",
-    "net.databinder" %% "dispatch-http" % "0.8.7" withSources
+
+    "net.databinder" %% "dispatch-http" % "0.8.7" withSources,
+
+    scalaz
   )
 
 
