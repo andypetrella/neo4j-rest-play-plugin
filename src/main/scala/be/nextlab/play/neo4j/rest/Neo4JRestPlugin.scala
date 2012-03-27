@@ -19,18 +19,7 @@ class Neo4JRestPlugin(app: Application) extends Plugin {
   ) yield (u,  p)
     
 
-  private lazy val restEndPointNoCredentials = :/(host, port)
-
-  private[Neo4JRestPlugin] def resolveFrom(from:Either[String, Request]):Request = from match {
-    case Left(s) => url(s)
-    case Right(r) => r
-  }
-  
-  def createRequest(from:Either[String, Request]) =
-    credentials map {t:(String, String) => resolveFrom(from).as(t._1, t._2)} getOrElse resolveFrom(from)
-
-  lazy val baseRestEndPoint = createRequest(Right(restEndPointNoCredentials))
-    
+  lazy val neo4j = Neo4JEndPoint(host, port, credentials)
 
   override def onStart() {
 
