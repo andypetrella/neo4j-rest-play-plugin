@@ -26,22 +26,35 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
 
   lazy val batch = (jsValue \ "batch").as[String]
 
-  lazy val cypher = (jsValue \ "cypher").as[String]
 
   lazy val extensionsInfo = (jsValue \ "extensions_info").as[String]
 
   lazy val extensions = (jsValue \ "extensions").as[JsObject]
 
+  //////CYPHER/////
+  lazy val _cypher = (jsValue \ "cypher").as[String]
+  def cypher(query: JsObject)(implicit neo: Neo4JEndPoint) =
+    Http(neo.request(Left(_cypher)) <<(stringify(query), "application/json") <:< Map("Accept" -> "application/json")
+      |>! {
+      {
+        case j: JsObject => CypherResult(j)
+        case _ => throw new IllegalStateException("Get Node must return a JsObject")
+      }
+    }
+    )
 
+
+  //////REFERENCE/////
   lazy val _referenceNode = (jsValue \ "reference_node").as[String]
 
   def referenceNode(implicit neo: Neo4JEndPoint) = getNode(_referenceNode)
 
-
+  //////NODE/////
   lazy val _node = (jsValue \ "node").as[String]
 
-  def getNode(id: Int)(implicit neo: Neo4JEndPoint):Neo4JElement = getNode(_node + "/" + id)
-  def getNode(url: String)(implicit neo: Neo4JEndPoint):Neo4JElement = Http((neo.request(Left(url)) <:< Map("Accept" -> "application/json") |>! ({
+  def getNode(id: Int)(implicit neo: Neo4JEndPoint): Neo4JElement = getNode(_node + "/" + id)
+
+  def getNode(url: String)(implicit neo: Neo4JEndPoint): Neo4JElement = Http((neo.request(Left(url)) <:< Map("Accept" -> "application/json") |>! ({
     case j: JsObject => Node(j)
     case _ => throw new IllegalStateException("Get Node must return a JsObject")
   })) >! {
@@ -68,12 +81,12 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
     }
 
     Http(request <:< Map("Accept" -> "application/json")
-        |>! {
-        {
-          case j: JsObject => Node(j)
-          case _ => throw new IllegalStateException("Get Node must return a JsObject")
-        }
+      |>! {
+      {
+        case j: JsObject => Node(j)
+        case _ => throw new IllegalStateException("Get Node must return a JsObject")
       }
+    }
     )
   }
 
@@ -115,6 +128,15 @@ object Node {
 
     val zero = Node(JsObject(Seq("data" -> JsObject(Seq()))))
   }
+
+}
+
+case class CypherResult(jsValue: JsObject) extends Neo4JElement {
+  type Js = JsObject
+
+
+  lazy val data = (jsValue \ "data").as[Seq[Seq[JsValue]]]
+  lazy val columns = (jsValue \ "columns").as[String]
 
 }
 
