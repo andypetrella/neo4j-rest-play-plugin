@@ -134,10 +134,13 @@ object Node {
 case class CypherResult(jsValue: JsObject) extends Neo4JElement {
   type Js = JsObject
 
-
   lazy val data = (jsValue \ "data").as[Seq[Seq[JsValue]]]
-  lazy val columns = (jsValue \ "columns").as[String]
+  lazy val columns = (jsValue \ "columns").as[Seq[String]]
 
+  
+  def result = data.map { one => {
+    columns zip one
+  }}
 }
 
 case class Failure(jsValue: JsObject) extends Neo4JElement {
