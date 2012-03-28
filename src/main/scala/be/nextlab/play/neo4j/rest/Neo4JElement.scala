@@ -97,6 +97,8 @@ case class Node(jsValue: JsObject) extends Neo4JElement {
 
   //url to it self
   lazy val self = (jsValue \ "self").as[String]
+  lazy val id = self.substring(self.lastIndexOf('/')+1).toInt
+
   //object holding properties
   lazy val data = (jsValue \ "data").as[JsObject]
 
