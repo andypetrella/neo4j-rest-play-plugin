@@ -77,7 +77,7 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
   def createNode(n: Option[Node])(implicit neo: Neo4JEndPoint) = {
     val request = n match {
       case None => neo.request(Left(_node)).POST
-      case Some(node) => neo.request(Left(_node)) <<(stringify(node.data), "application/json")
+      case Some(node) => neo.request(Left(_node)) << (stringify(node.data), "application/json")
     }
 
     Http(request <:< Map("Accept" -> "application/json")
