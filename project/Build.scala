@@ -14,8 +14,6 @@ object MinimalBuild extends Build {
   val libDependencies = Seq(
     "play" %% "play" % "2.0",
 
-    "net.databinder" %% "dispatch-http" % "0.8.7" withSources,
-
     scalaz
   )
 

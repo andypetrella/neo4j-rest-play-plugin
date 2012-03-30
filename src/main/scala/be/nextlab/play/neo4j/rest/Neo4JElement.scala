@@ -3,8 +3,9 @@ package be.nextlab.play.neo4j.rest
 import scalaz.Monoid
 import play.api.libs.json._
 import play.api.libs.json.Json._
-import dispatch._
-import be.nextlab.play.neo4j.rest.util.PlayJsonDispatch._
+import Neo4JEndPoint._
+import play.api.libs.concurrent.Promise
+import play.api.libs.ws.WS.WSRequestHolder
 
 
 /**
@@ -33,15 +34,17 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
 
   //////CYPHER/////
   lazy val _cypher = (jsValue \ "cypher").as[String]
+
   def cypher(query: JsObject)(implicit neo: Neo4JEndPoint) =
-    Http(neo.request(Left(_cypher)) <<(stringify(query), "application/json") <:< Map("Accept" -> "application/json")
-      |>! {
-      {
-        case j: JsObject => CypherResult(j)
-        case _ => throw new IllegalStateException("Get Node must return a JsObject")
-      }
+    neo.request(Left(_cypher)) acceptJson() post (query) map {
+      resp =>
+        resp.status match {
+          case 200 => resp.json match {
+            case j: JsObject => CypherResult(j)
+            case _ => throw new IllegalStateException("Get Node must return a JsObject")
+          }
+        }
     }
-    )
 
 
   //////REFERENCE/////
@@ -52,42 +55,37 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
   //////NODE/////
   lazy val _node = (jsValue \ "node").as[String]
 
-  def getNode(id: Int)(implicit neo: Neo4JEndPoint): Neo4JElement = getNode(_node + "/" + id)
+  def getNode(id: Int)(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] = getNode(_node + "/" + id)
 
-  def getNode(url: String)(implicit neo: Neo4JEndPoint): Neo4JElement = Http((neo.request(Left(url)) <:< Map("Accept" -> "application/json") |>! ({
-    case j: JsObject => Node(j)
-    case _ => throw new IllegalStateException("Get Node must return a JsObject")
-  })) >! {
-    case e => {
-      //todo find the type of the exception thrown for a 404 => node not existing
-
-      //todo remove this...
-      e.printStackTrace()
-      //todo how to retrieve the error message (json)...
-      Failure(
-        JsObject(Seq(
-          "message" -> JsString(e.getMessage),
-          "exception" -> JsString(e.toString),
-          "stacktrace" -> JsArray())
-        )
-      )
-    }
-  })
+  def getNode(url: String)(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] = neo.request(Left(url)) acceptJson() get() map {
+    resp =>
+      resp.status match {
+        case 200 => resp.json match {
+          case jo: JsObject => Node(jo)
+          case _ => throw new IllegalStateException("Get Node must return a JsObject")
+        }
+        case 404 => resp.json match {
+          case jo: JsObject => Failure(jo, 404, "Node not Found")
+          case _ => throw new IllegalStateException("Get Node (errored) must return a JsObject")
+        }
+      }
+  }
 
   def createNode(n: Option[Node])(implicit neo: Neo4JEndPoint) = {
-    val request = n match {
-      case None => neo.request(Left(_node)).POST
-      case Some(node) => neo.request(Left(_node)) << (stringify(node.data), "application/json")
-    }
+    val holder: WSRequestHolder = neo.request(Left(_node)) acceptJson()
 
-    Http(request <:< Map("Accept" -> "application/json")
-      |>! {
-      {
-        case j: JsObject => Node(j)
-        case _ => throw new IllegalStateException("Get Node must return a JsObject")
-      }
+    (n match {
+      case None => holder post(JsObject(Seq()))
+      case Some(node) => holder post (node.data)
+    }) map {
+      resp =>
+        resp.status match {
+          case 201 => resp.json match {
+            case jo: JsObject => Node(jo)
+            case _ => throw new IllegalStateException("Create Node must return a JsObject")
+          }
+        }
     }
-    )
   }
 
 }
@@ -97,7 +95,7 @@ case class Node(jsValue: JsObject) extends Neo4JElement {
 
   //url to it self
   lazy val self = (jsValue \ "self").as[String]
-  lazy val id = self.substring(self.lastIndexOf('/')+1).toInt
+  lazy val id = self.substring(self.lastIndexOf('/') + 1).toInt
 
   //object holding properties
   lazy val data = (jsValue \ "data").as[JsObject]
@@ -115,7 +113,42 @@ case class Node(jsValue: JsObject) extends Neo4JElement {
   lazy val createRelationship = (jsValue \ "create_relationship").as[String]
 
   lazy val property = (jsValue \ "property").as[String]
-  lazy val properties = (jsValue \ "properties").as[String]
+
+  lazy val _properties = (jsValue \ "properties").as[String]
+
+  def properties(data: Option[JsObject])(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] = data match {
+
+    case Some(d) => neo.request(Left(_properties)) acceptJson() put (d) map { resp =>
+      resp.status match {
+        case 204 => this ++ Node(JsObject(Seq("data" -> d)))
+        case x => throw new IllegalStateException("TODO : update props error " + x)
+      }
+    }
+
+    case None => neo.request(Left(_properties)) acceptJson() get() map {
+      resp =>
+        resp.status match {
+          case 200 => resp.json match {
+            case j: JsObject => this ++ Node(JsObject(Seq("data" -> j)))
+            case _ => throw new IllegalStateException("Get Properties Node must return a JsObject")
+          }
+          case x => throw new IllegalStateException("TODO : get props error " + x)
+        }
+    }
+  }
+
+  def delete(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] =
+    neo.request(Left(self)) acceptJson() delete() map { resp =>
+      resp.status match {
+          case 204 => this
+          case 409 => resp.json match {
+            case jo:JsObject => Failure(jo, 409, "Cannot Delete Node with relations")
+            case _ => throw new IllegalStateException("delete Node must return a JsObject")
+          }
+          case x => throw new IllegalStateException("TODO : delete node error " + x)
+        }
+    }
+
 
   lazy val extensions = (jsValue \ "extensions").as[JsObject]
 
@@ -139,13 +172,15 @@ case class CypherResult(jsValue: JsObject) extends Neo4JElement {
   lazy val data = (jsValue \ "data").as[Seq[Seq[JsValue]]]
   lazy val columns = (jsValue \ "columns").as[Seq[String]]
 
-  
-  def result = data.map { one => {
-    columns zip one
-  }}
+
+  def result = data.map {
+    one => {
+      columns zip one
+    }
+  }
 }
 
-case class Failure(jsValue: JsObject) extends Neo4JElement {
+case class Failure(jsValue: JsObject, status:Int, info:String) extends Neo4JElement {
   type Js = JsObject
 
 
