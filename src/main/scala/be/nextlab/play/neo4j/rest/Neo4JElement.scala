@@ -152,7 +152,25 @@ case class Node(jsValue: JsObject) extends Neo4JElement {
 
   lazy val extensions = (jsValue \ "extensions").as[JsObject]
 
-  def ++(el: Node) = Node(jsValue ++ el.jsValue)
+  def addJsObject(jo1:JsObject, jo2:JsObject) = {
+    (jo1.fields union jo2.fields) foldLeft (Map():Map[String, JsValue]) {
+      case (acc:Map[String, JsValue], (f:String, v:JsValue)) => acc.get(f).map( {
+        case x => x
+      }).getOrElse(v)
+    }
+    
+    
+
+    val a = jo1.fields.filter {case (f:String,v:JsValue) => jo2.fields.find  { case (f2:String, v2:JsValue) => f2 == f }.isDefined }
+    
+    
+    
+    JsObject(jo1.fields ++ jo2.fields)
+  }
+
+  //todo merge the js objects correctly because "data" aren't merged...
+
+  def ++(el: Node) = Node(addJsObject(jsValue, el.jsValue))
 
 }
 
