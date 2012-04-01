@@ -11,10 +11,15 @@ object MinimalBuild extends Build {
   val scalazVersionNumber = "6.0.3"
   val scalaz = "org.scalaz" %% "scalaz-core" % scalazVersionNumber withSources
 
+  val specs2 = "org.specs2" %% "specs2" % "1.8.2" % "test" withSources
+
   val libDependencies = Seq(
     "play" %% "play" % "2.0",
 
-    scalaz
+    scalaz,
+
+    specs2,
+    "play" %% "play-test" % "2.0"
   )
 
 

@@ -9,6 +9,7 @@ import play.api.{Play, Application}
 
 class Neo4JRestPlugin(app: Application) extends Plugin {
 
+  lazy val neo4jVersion = app.configuration.getString("neo4j.version").getOrElse("1.6")
   lazy val protocol = app.configuration.getString("neo4j.rest.protocol").getOrElse("http")
   lazy val host = app.configuration.getString("neo4j.rest.host").getOrElse("localhost")
   lazy val port = app.configuration.getInt("neo4j.rest.port").getOrElse(7474)
