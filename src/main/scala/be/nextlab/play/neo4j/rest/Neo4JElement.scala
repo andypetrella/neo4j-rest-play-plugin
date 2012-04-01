@@ -315,7 +315,6 @@ object Node {
         case x => throw new IllegalStateException("Cannot add two nodes : " + s1 + " and " + s2)
       }
       val newFields: Seq[(String, JsValue)] = s1.jsValue.fields.filter(_._1 != "data") ++ s2.jsValue.fields.filter(f => f._1 != "data" && s1.jsValue.fields.find(_._1 == f._1).isEmpty)
-      println("new fields " + newFields)
       val allNewFields: Seq[(String, JsValue)] = ("data", newData) +: newFields
       Node(JsObject(allNewFields))
     }
