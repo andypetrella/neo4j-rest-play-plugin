@@ -13,17 +13,20 @@ import collection.Seq
  * User: andy
  */
 sealed abstract class Neo4JElement {
-  val jsValue: JsValue
+  type Js <: JsValue
+
+  val jsValue: Js
 }
 
 case class Root(jsValue: JsObject) extends Neo4JElement {
+
+  type Js = JsObject
 
   lazy val neo4jVersion = (jsValue \ "neo4j_version").as[String]
 
 
   lazy val relationshipTypes = (jsValue \ "relationship_types").as[String]
 
-  lazy val nodeIndex = (jsValue \ "node_index").as[String]
   lazy val relationshipIndex = (jsValue \ "relationship_index").as[String]
 
   lazy val batch = (jsValue \ "batch").as[String]
@@ -33,19 +36,6 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
 
   lazy val extensions = (jsValue \ "extensions").as[JsObject]
 
-  //////CYPHER/////
-  lazy val _cypher = (jsValue \ "cypher").as[String]
-
-  def cypher(query: JsObject)(implicit neo: Neo4JEndPoint) =
-    neo.request(Left(_cypher)) acceptJson() post (query) map {
-      resp =>
-        resp.status match {
-          case 200 => resp.json match {
-            case j: JsObject => CypherResult(j)
-            case _ => throw new IllegalStateException("Get Node must return a JsObject")
-          }
-        }
-    }
 
 
   //////REFERENCE/////
@@ -89,9 +79,59 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
     }
   }
 
+  def getUniqueNode(kvp:(String, String))(indexName:String)(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] =
+    neo.request(Left(_nodeIndex + "/" + indexName + "/" + kvp._1 + "/" + kvp._2)) get() map {
+      resp => resp.status match {
+        case 200 => resp.json match {
+          case jo: JsObject => UniqueNode(jo)
+          case ja: JsArray => ja.value match {
+            case (a:JsObject)::Nil => UniqueNode(a)
+            case x => throw new IllegalStateException("Get UniqueNode must return a JsObject or a singleton array and not " + x)
+          }
+          case x => throw new IllegalStateException("Get Unique Node must return a JsObject or a singleton array and not " + x)
+        }
+        case 404 => resp.json match {
+          case jo: JsObject => Failure(jo, 404, "Unique Node not Found")
+          case x => throw new IllegalStateException("Get Unique Node (errored) must return a JsObject and not " + x)
+        }
+      }
+    }
+
+  //the value might be int or easiest with JsString, JsNumber, ...
+  def createUniqueNode(n: UniqueNode, kvp:(String, String))(indexName:String)(implicit neo: Neo4JEndPoint) =
+    neo.request(Left(_nodeIndex + "/" + indexName + "?unique")) acceptJson() post (JsObject(Seq("key" -> JsString(kvp._1), "value" -> JsString(kvp._2), "properties" -> n.data))) map {
+      resp =>
+        resp.status match {
+          case 201 => resp.json match {
+            case jo: JsObject => UniqueNode(jo)
+            case x => throw new IllegalStateException("Create UniqueNode must return a JsObject or a singleton array and not " + x)
+          }
+          case 200 => throw new IllegalStateException("Create UniqueNode has been tried but node already exists")
+        }
+  }
+
+
+  //////CYPHER/////
+  lazy val _cypher = (jsValue \ "cypher").as[String]
+
+  def cypher(query: JsObject)(implicit neo: Neo4JEndPoint) =
+    neo.request(Left(_cypher)) acceptJson() post (query) map {
+      resp =>
+        resp.status match {
+          case 200 => resp.json match {
+            case j: JsObject => CypherResult(j)
+            case _ => throw new IllegalStateException("Get Node must return a JsObject")
+          }
+        }
+    }
+
+  //////NODE INDEXES/////
+  lazy val _nodeIndex = (jsValue \ "node_index").as[String]
+
+
 }
 
-case class Node(jsValue: JsObject) extends Neo4JElement {
+trait BaseNode[N <: BaseNode[N]] extends Neo4JElement {
   import Neo4JElement._
   import Node._
 
@@ -145,8 +185,8 @@ case class Node(jsValue: JsObject) extends Neo4JElement {
     neo.request(Left(self)) acceptJson() delete() map { resp =>
       resp.status match {
         case 204 => this
-        case 409 => resp.json match {
-          case jo:JsObject => Failure(jo, 409, "Cannot Delete Node with relations")
+        case x if x == 409 => resp.json match {
+          case jo:JsObject => Failure(jo, x, "Cannot Delete Node with relations")
           case _ => throw new IllegalStateException("delete Node must return a JsObject")
         }
         case x => throw new IllegalStateException("TODO : delete node error " + x)
@@ -154,10 +194,41 @@ case class Node(jsValue: JsObject) extends Neo4JElement {
     }
   }
 
-
   lazy val extensions = (jsValue \ "extensions").as[JsObject]
 
-  def ++(other:Node) = NodeMonoid append (this, other)
+  def ++(other:BaseNode[N])(implicit m:Monoid[BaseNode[N]]) = m append (this, other)
+
+}
+
+case class Node(jsValue: JsObject) extends BaseNode[Node]{
+
+}
+
+case class UniqueNode(jsValue: JsObject) extends BaseNode[UniqueNode] {
+  import Neo4JElement._
+  import Node._
+
+  //indexed uri
+  lazy val indexed = (jsValue \ "indexed").as[String]
+  lazy val key = indexed.reverse.dropWhile(_ != '/').drop(1).dropWhile(_ != '/').drop(1).takeWhile(_ != '/').reverse
+  lazy val indexName = indexed.reverse.dropWhile(_ != '/').drop(1).dropWhile(_ != '/').drop(1).dropWhile(_ != '/').drop(1).takeWhile(_ != '/').reverse
+
+  override def properties(data: Option[JsObject])(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] =
+    data match {
+      case None => super.properties(data)
+      case Some(d) =>
+        for {
+          u <- super.properties(data); //update the data node
+          de <- neo.request(Left(indexed)) acceptJson() delete(); //delete the unique index entry
+          r <- neo.root; // retrieve the service root
+          i <- neo.request(Left(r._nodeIndex + "/" + indexName + "?unique")) acceptJson() post (JsObject(Seq("key" -> JsString(key), "value" -> (d \ key), "uri" -> JsString(self)))) //create the index entry
+        } yield u
+      }
+
+  override def delete(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] =  for {
+    u <- super.delete; //delete the node
+    d <- neo.request(Left(indexed)) acceptJson() delete() //delete the unique index entry
+  } yield u
 
 }
 
@@ -320,5 +391,18 @@ object Node {
     }
 
     val zero = Node(JsObject(Seq("data" -> JsObject(Seq()))))
+  }
+  implicit object UniqueNodeMonoid extends Monoid[UniqueNode] {
+    def append(s1: UniqueNode, s2: => UniqueNode) = {
+      val newData: JsObject = (s1.data +++ s2.data) match {
+        case o: JsObject => o
+        case x => throw new IllegalStateException("Cannot add two nodes : " + s1 + " and " + s2)
+      }
+      val newFields: Seq[(String, JsValue)] = s1.jsValue.fields.filter(_._1 != "data") ++ s2.jsValue.fields.filter(f => f._1 != "data" && s1.jsValue.fields.find(_._1 == f._1).isEmpty)
+      val allNewFields: Seq[(String, JsValue)] = ("data", newData) +: newFields
+      UniqueNode(JsObject(allNewFields))
+    }
+
+    val zero = UniqueNode(JsObject(Seq("data" -> JsObject(Seq()))))
   }
 }
