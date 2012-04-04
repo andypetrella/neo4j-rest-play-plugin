@@ -210,11 +210,7 @@ case class Node(jsValue: JsObject, indexes: Seq[(String, Boolean, String, JsObje
   def deleteFromIndex(idx: (String, Boolean, String, JsObject => JsValue))(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] =
     (for {
       r <- neo.root;
-      d <- {
-        val a = r._nodeIndex + "/" + idx._1 + "/" + idx._3 + "/" + jsToString(idx._4(jsValue)) + "/" + id
-        println(a)
-        neo.request(Left(a)) acceptJson() delete()
-      } //too externalize
+      d <- neo.request(Left(r._nodeIndex + "/" + idx._1 + "/" + idx._3 + "/" + jsToString(idx._4(jsValue)) + "/" + id)) acceptJson() delete()//too externalize
     } yield d) map {
       resp => resp.status match {
         case 204 => {
