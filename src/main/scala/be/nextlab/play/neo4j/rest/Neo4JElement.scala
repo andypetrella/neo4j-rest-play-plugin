@@ -20,6 +20,8 @@ sealed abstract class Neo4JElement {
 
 case class Root(jsValue: JsObject) extends Neo4JElement {
 
+  import Neo4JElement._
+
   type Js = JsObject
 
   lazy val neo4jVersion = (jsValue \ "neo4j_version").as[String]
@@ -35,7 +37,6 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
   lazy val extensionsInfo = (jsValue \ "extensions_info").as[String]
 
   lazy val extensions = (jsValue \ "extensions").as[JsObject]
-
 
 
   //////REFERENCE/////
@@ -62,54 +63,48 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
       }
   }
 
-  def createNode(n: Option[Node])(implicit neo: Neo4JEndPoint) = {
+  def createNode(n: Option[Node])(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] = {
     val holder: WSRequestHolder = neo.request(Left(_node)) acceptJson()
 
     (n match {
-      case None => holder post(JsObject(Seq()))
+      case None => holder post (JsObject(Seq()))
       case Some(node) => holder post (node.data)
     }) map {
       resp =>
         resp.status match {
           case 201 => resp.json match {
-            case jo: JsObject => Node(jo)
+            case jo: JsObject => Node(jo, n map {
+              _.indexes
+            } getOrElse (Nil))
             case _ => throw new IllegalStateException("Create Node must return a JsObject")
           }
         }
+    } flatMap {
+      case o: Node => o.applyIndexes //apply indexes at the end
+      case _ => {
+        throw new IllegalStateException("TODO")
+      }
     }
   }
 
-  def getUniqueNode(kvp:(String, String))(indexName:String)(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] =
-    neo.request(Left(_nodeIndex + "/" + indexName + "/" + kvp._1 + "/" + kvp._2)) get() map {
+  def getUniqueNode(kvp: (String, JsValue))(indexName: String)(implicit neo: Neo4JEndPoint): Promise[Option[Neo4JElement]] =
+    neo.request(Left(_nodeIndex + "/" + indexName + "/" + kvp._1 + "/" + jsToString(kvp._2))) get() map {
       resp => resp.status match {
         case 200 => resp.json match {
-          case jo: JsObject => UniqueNode(jo)
+          case jo: JsObject => Some(Node(jo))
           case ja: JsArray => ja.value match {
-            case (a:JsObject)::Nil => UniqueNode(a)
+            case Nil => None
+            case (a: JsObject) :: Nil => Some(Node(a))
             case x => throw new IllegalStateException("Get UniqueNode must return a JsObject or a singleton array and not " + x)
           }
           case x => throw new IllegalStateException("Get Unique Node must return a JsObject or a singleton array and not " + x)
         }
         case 404 => resp.json match {
-          case jo: JsObject => Failure(jo, 404, "Unique Node not Found")
+          case jo: JsObject => Some(Failure(jo, 404, "Unique Node not Found"))
           case x => throw new IllegalStateException("Get Unique Node (errored) must return a JsObject and not " + x)
         }
       }
     }
-
-  //the value might be int or easiest with JsString, JsNumber, ...
-  def createUniqueNode(n: UniqueNode, kvp:(String, String))(indexName:String)(implicit neo: Neo4JEndPoint) =
-    neo.request(Left(_nodeIndex + "/" + indexName + "?unique")) acceptJson() post (JsObject(Seq("key" -> JsString(kvp._1), "value" -> JsString(kvp._2), "properties" -> n.data))) map {
-      resp =>
-        resp.status match {
-          case 201 => resp.json match {
-            case jo: JsObject => UniqueNode(jo)
-            case x => throw new IllegalStateException("Create UniqueNode must return a JsObject or a singleton array and not " + x)
-          }
-          case 200 => throw new IllegalStateException("Create UniqueNode has been tried but node already exists")
-        }
-  }
-
 
   //////CYPHER/////
   lazy val _cypher = (jsValue \ "cypher").as[String]
@@ -131,9 +126,9 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
 
 }
 
-trait BaseNode[N <: BaseNode[N]] extends Neo4JElement {
+case class Node(jsValue: JsObject, indexes: Seq[(String, Boolean, String, JsObject => JsValue)] = Nil) extends Neo4JElement {
+
   import Neo4JElement._
-  import Node._
 
   type Js = JsObject
 
@@ -160,75 +155,97 @@ trait BaseNode[N <: BaseNode[N]] extends Neo4JElement {
 
   lazy val _properties = (jsValue \ "properties").as[String]
 
-  def properties(data: Option[JsObject])(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] = data match {
+  def properties(data: Option[JsObject])(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] =
+    data match {
 
-    case Some(d) => neo.request(Left(_properties)) acceptJson() put (d) map { resp =>
-      resp.status match {
-        case 204 => Node(JsObject(("data" -> d) +: this.jsValue.fields.filterNot(_._1 == "data")))
-        case x => throw new IllegalStateException("TODO : update props error " + x + "(" + d + ")")
+      case Some(d) => this.deleteFromIndexes flatMap {
+        r => //indexes have been deleted => now update the properties
+          neo.request(Left(_properties)) acceptJson() put (d) map {
+            resp =>
+              resp.status match {
+                case 204 => Node(JsObject(("data" -> d) +: this.jsValue.fields.filterNot(_._1 == "data")), indexes)
+                case x => throw new IllegalStateException("TODO : update props error " + x + "(" + d + ")")
+              }
+          }
+      } flatMap {
+        case o: Node => o.applyIndexes //apply indexes after update
+        case _ => throw new IllegalStateException("TODO")
+      }
+
+      case None => neo.request(Left(_properties)) acceptJson() get() map {
+        resp =>
+          resp.status match {
+            case 200 => resp.json match {
+              case j: JsObject => Node(JsObject(("data" -> j) +: this.jsValue.fields.filterNot(_._1 == "data")), indexes)
+              case _ => throw new IllegalStateException("Get Properties Node must return a JsObject")
+            }
+            case x => throw new IllegalStateException("TODO : get props error " + x)
+          }
       }
     }
 
-    case None => neo.request(Left(_properties)) acceptJson() get() map {
-      resp =>
-        resp.status match {
-          case 200 => resp.json match {
-            case j: JsObject => Node(JsObject(("data" -> j) +: this.jsValue.fields.filterNot(_._1 == "data")))
-            case _ => throw new IllegalStateException("Get Properties Node must return a JsObject")
-          }
-          case x => throw new IllegalStateException("TODO : get props error " + x)
-        }
+
+  def applyIndexes(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] = indexes.foldLeft(Promise.pure(this): Promise[Neo4JElement]) {
+    (pr, idx) => pr flatMap {
+      _ => applyIndex(idx)
     }
   }
 
-  def delete(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] =  {
-    neo.request(Left(self)) acceptJson() delete() map { resp =>
-      resp.status match {
-        case 204 => this
-        case x if x == 409 => resp.json match {
-          case jo:JsObject => Failure(jo, x, "Cannot Delete Node with relations")
-          case _ => throw new IllegalStateException("delete Node must return a JsObject")
-        }
-        case x => throw new IllegalStateException("TODO : delete node error " + x)
+  def applyIndex(idx: (String, Boolean, String, JsObject => JsValue))(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] =
+    (for {
+      r <- neo.root;
+      i <- neo.request(Left(r._nodeIndex + "/" + idx._1 + (if (idx._2) "?unique" else ""))) post (JsObject(Seq("key" -> JsString(idx._3), "value" -> idx._4(jsValue), "uri" -> JsString(self))))
+    } yield i) map {
+      resp => resp.status match {
+        case 201 => this
       }
+    }
+
+  def deleteFromIndexes(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] = indexes.foldLeft(Promise.pure(this): Promise[Neo4JElement]) {
+    (pr, idx) => pr flatMap {
+      _ => deleteFromIndex(idx)
+    }
+  }
+
+  def deleteFromIndex(idx: (String, Boolean, String, JsObject => JsValue))(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] =
+    (for {
+      r <- neo.root;
+      d <- {
+        val a = r._nodeIndex + "/" + idx._1 + "/" + idx._3 + "/" + jsToString(idx._4(jsValue)) + "/" + id
+        println(a)
+        neo.request(Left(a)) acceptJson() delete()
+      } //too externalize
+    } yield d) map {
+      resp => resp.status match {
+        case 204 => {
+          println("index deleted")
+
+          this
+        }
+      }
+    }
+
+  def delete(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] = {
+    //delete from indexes first
+    deleteFromIndexes flatMap {
+      _ =>
+        neo.request(Left(self)) acceptJson() delete() map {
+          resp =>
+            resp.status match {
+              case 204 => this
+              case x if x == 409 => resp.json match {
+                case jo: JsObject => Failure(jo, x, "Cannot Delete Node with relations")
+                case _ => throw new IllegalStateException("delete Node must return a JsObject")
+              }
+              case x => throw new IllegalStateException("TODO : delete node error " + x)
+            }
+        }
     }
   }
 
   lazy val extensions = (jsValue \ "extensions").as[JsObject]
 
-  def ++(other:BaseNode[N])(implicit m:Monoid[BaseNode[N]]) = m append (this, other)
-
-}
-
-case class Node(jsValue: JsObject) extends BaseNode[Node]{
-
-}
-
-case class UniqueNode(jsValue: JsObject) extends BaseNode[UniqueNode] {
-  import Neo4JElement._
-  import Node._
-
-  //indexed uri
-  lazy val indexed = (jsValue \ "indexed").as[String]
-  lazy val key = indexed.reverse.dropWhile(_ != '/').drop(1).dropWhile(_ != '/').drop(1).takeWhile(_ != '/').reverse
-  lazy val indexName = indexed.reverse.dropWhile(_ != '/').drop(1).dropWhile(_ != '/').drop(1).dropWhile(_ != '/').drop(1).takeWhile(_ != '/').reverse
-
-  override def properties(data: Option[JsObject])(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] =
-    data match {
-      case None => super.properties(data)
-      case Some(d) =>
-        for {
-          u <- super.properties(data); //update the data node
-          de <- neo.request(Left(indexed)) acceptJson() delete(); //delete the unique index entry
-          r <- neo.root; // retrieve the service root
-          i <- neo.request(Left(r._nodeIndex + "/" + indexName + "?unique")) acceptJson() post (JsObject(Seq("key" -> JsString(key), "value" -> (d \ key), "uri" -> JsString(self)))) //create the index entry
-        } yield u
-      }
-
-  override def delete(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] =  for {
-    u <- super.delete; //delete the node
-    d <- neo.request(Left(indexed)) acceptJson() delete() //delete the unique index entry
-  } yield u
+  def ++(other: Node)(implicit m: Monoid[Node]) = m append(this, other)
 
 }
 
@@ -246,7 +263,7 @@ case class CypherResult(jsValue: JsObject) extends Neo4JElement {
   }
 }
 
-case class Failure(jsValue: JsObject, status:Int, info:String) extends Neo4JElement {
+case class Failure(jsValue: JsObject, status: Int, info: String) extends Neo4JElement {
   type Js = JsObject
 
 
@@ -266,13 +283,23 @@ case class Empty() extends Neo4JElement {
 
 object Neo4JElement {
 
-  trait JsValueW[Js <: JsValue] {
-    def +++[T <: JsValue](me:Js, other: T):JsValue
+  implicit def jsToString(js: JsValue): String = js match {
+    case o: JsObject => o.value.toString()
+    case o: JsArray => o.value.view.map(jsToString(_)).mkString(",")
+    case o: JsNull.type => ""
+    case o: JsUndefined => o.error
+    case o: JsNumber => o.value.toString()
+    case o: JsBoolean => o.value.toString
+    case o: JsString => o.value
   }
-  
+
+  trait JsValueW[Js <: JsValue] {
+    def +++[T <: JsValue](me: Js, other: T): JsValue
+  }
+
   implicit object JsObjectW extends JsValueW[JsObject] {
-    def +++[T <: JsValue](me:JsObject, other: T):JsValue = other match {
-      case o:JsObject => {
+    def +++[T <: JsValue](me: JsObject, other: T): JsValue = other match {
+      case o: JsObject => {
         val (incl, excl) = me.fields.foldLeft((Seq(), Seq()): (Seq[(String, (JsValue, JsValue))], Seq[(String, JsValue)])) {
           (acc, f) => {
             o.fields.find(_._1 == f._1) match {
@@ -291,61 +318,61 @@ object Neo4JElement {
         } ++ excl ++ (o.fields.filter(of => me.fields.find(_._1 == of._1).isEmpty))
         JsObject(result)
       }
-      case o if o == JsNull =>  me
-      case o:JsUndefined => me
+      case o if o == JsNull => me
+      case o: JsUndefined => me
       case x => JsUndefined("Not tackled : " + me + "+++" + x)
     }
   }
 
   implicit object JsArrayW extends JsValueW[JsArray] {
-    def +++[T <: JsValue](me:JsArray, other: T):JsValue = other match {
-      case o:JsArray => me ++ o
-      case o if o == JsNull =>  me
-      case o:JsUndefined => me
+    def +++[T <: JsValue](me: JsArray, other: T): JsValue = other match {
+      case o: JsArray => me ++ o
+      case o if o == JsNull => me
+      case o: JsUndefined => me
       case x => JsUndefined("Not tackled : " + me + "+++" + x)
     }
   }
 
   implicit object JsStringW extends JsValueW[JsString] {
-    def +++[T <: JsValue](me:JsString, other: T):JsValue = other match {
-      case o:JsObject => JsString(me.value + o.value.toString())
-      case o:JsArray => JsString(me.value + o.value.mkString(""))
-      case o if o == JsNull =>  me
-      case o:JsUndefined => me
-      case o:JsNumber => JsString(me.value + o.value)
-      case o:JsBoolean => JsString(me.value + o.value)
-      case o:JsString => JsString(me.value + o.value)
+    def +++[T <: JsValue](me: JsString, other: T): JsValue = other match {
+      case o: JsObject => JsString(me.value + o.value.toString())
+      case o: JsArray => JsString(me.value + o.value.mkString(""))
+      case o if o == JsNull => me
+      case o: JsUndefined => me
+      case o: JsNumber => JsString(me.value + o.value)
+      case o: JsBoolean => JsString(me.value + o.value)
+      case o: JsString => JsString(me.value + o.value)
       case x => JsUndefined("Not tackled : " + me + "+++" + x)
     }
   }
 
   implicit object JsNumberW extends JsValueW[JsNumber] {
-    def +++[T <: JsValue](me:JsNumber, other: T):JsValue = other match {
-      case o if o == JsNull =>  me
-      case o:JsUndefined => me
-      case o:JsNumber => JsNumber(me.value + o.value)
+    def +++[T <: JsValue](me: JsNumber, other: T): JsValue = other match {
+      case o if o == JsNull => me
+      case o: JsUndefined => me
+      case o: JsNumber => JsNumber(me.value + o.value)
       case x => JsUndefined("Not tackled : " + me + "+++" + x)
     }
   }
 
   implicit object JsBooleanW extends JsValueW[JsBoolean] {
-    def +++[T <: JsValue](me:JsBoolean, other: T):JsValue = other match {
-      case o if o == JsNull =>  me
-      case o:JsUndefined => me
-      case o:JsBoolean => JsBoolean(me.value | o.value)
+    def +++[T <: JsValue](me: JsBoolean, other: T): JsValue = other match {
+      case o if o == JsNull => me
+      case o: JsUndefined => me
+      case o: JsBoolean => JsBoolean(me.value | o.value)
       case x => JsUndefined("Not tackled : " + me + "+++" + x)
     }
   }
 
   implicit object JsUndefinedW extends JsValueW[JsUndefined] {
-    def +++[T <: JsValue](me:JsUndefined, other: T):JsValue = other match {
-      case o:JsValue => o
+    def +++[T <: JsValue](me: JsUndefined, other: T): JsValue = other match {
+      case o: JsValue => o
       case x => JsUndefined("Not tackled : " + me + "+++" + x)
     }
   }
 
   implicit object JsNullW extends JsValueW[JsNull.type] {
-    def +++[T <: JsValue](me:JsNull.type, other: T):JsValue = other match {
+    def +++[T <: JsValue](me: JsNull.type, other: T): JsValue = other match {
       case o if o == JsNull => JsNull
       case x => x
     }
@@ -353,30 +380,32 @@ object Neo4JElement {
 
   implicit object JsValueMonoid extends Monoid[JsValue] {
     def append(s1: JsValue, s2: => JsValue) = s1 match {
-      case o:JsNull.type => implicitly[JsValueW[JsNull.type]] +++ (o, s2)
-      case o:JsUndefined => implicitly[JsValueW[JsUndefined]] +++ (o, s2)
-      case o:JsString => implicitly[JsValueW[JsString]] +++ (o, s2)
-      case o:JsNumber => implicitly[JsValueW[JsNumber]] +++ (o, s2)
-      case o:JsBoolean => implicitly[JsValueW[JsBoolean]] +++ (o, s2)
-      case o:JsArray => implicitly[JsValueW[JsArray]] +++ (o, s2)
-      case o:JsObject => implicitly[JsValueW[JsObject]] +++ (o, s2)
+      case o: JsNull.type => implicitly[JsValueW[JsNull.type]] +++(o, s2)
+      case o: JsUndefined => implicitly[JsValueW[JsUndefined]] +++(o, s2)
+      case o: JsString => implicitly[JsValueW[JsString]] +++(o, s2)
+      case o: JsNumber => implicitly[JsValueW[JsNumber]] +++(o, s2)
+      case o: JsBoolean => implicitly[JsValueW[JsBoolean]] +++(o, s2)
+      case o: JsArray => implicitly[JsValueW[JsArray]] +++(o, s2)
+      case o: JsObject => implicitly[JsValueW[JsObject]] +++(o, s2)
     }
 
     val zero = JsNull
   }
 
 
-  case class JsValueAppendable(js:JsValue) {
+  case class JsValueAppendable(js: JsValue) {
+
     import JsValueMonoid._
 
-    def +++(other:JsValue)(implicit m:Monoid[JsValue]):JsValue = m.append(js, other)
+    def +++(other: JsValue)(implicit m: Monoid[JsValue]): JsValue = m.append(js, other)
   }
 
-  implicit def jsValueToAppendable(js:JsValue):JsValueAppendable = JsValueAppendable(js)
+  implicit def jsValueToAppendable(js: JsValue): JsValueAppendable = JsValueAppendable(js)
 
 }
 
-object Node {
+object BaseNode {
+
   import Neo4JElement._
 
   implicit object NodeMonoid extends Monoid[Node] {
@@ -387,22 +416,10 @@ object Node {
       }
       val newFields: Seq[(String, JsValue)] = s1.jsValue.fields.filter(_._1 != "data") ++ s2.jsValue.fields.filter(f => f._1 != "data" && s1.jsValue.fields.find(_._1 == f._1).isEmpty)
       val allNewFields: Seq[(String, JsValue)] = ("data", newData) +: newFields
-      Node(JsObject(allNewFields))
+      Node(JsObject(allNewFields), s1.indexes ++ (s2.indexes diff s1.indexes))
     }
 
     val zero = Node(JsObject(Seq("data" -> JsObject(Seq()))))
   }
-  implicit object UniqueNodeMonoid extends Monoid[UniqueNode] {
-    def append(s1: UniqueNode, s2: => UniqueNode) = {
-      val newData: JsObject = (s1.data +++ s2.data) match {
-        case o: JsObject => o
-        case x => throw new IllegalStateException("Cannot add two nodes : " + s1 + " and " + s2)
-      }
-      val newFields: Seq[(String, JsValue)] = s1.jsValue.fields.filter(_._1 != "data") ++ s2.jsValue.fields.filter(f => f._1 != "data" && s1.jsValue.fields.find(_._1 == f._1).isEmpty)
-      val allNewFields: Seq[(String, JsValue)] = ("data", newData) +: newFields
-      UniqueNode(JsObject(allNewFields))
-    }
 
-    val zero = UniqueNode(JsObject(Seq("data" -> JsObject(Seq()))))
-  }
 }
