@@ -213,11 +213,7 @@ case class Node(jsValue: JsObject, indexes: Seq[(String, Boolean, String, JsObje
       d <- neo.request(Left(r._nodeIndex + "/" + idx._1 + "/" + idx._3 + "/" + jsToString(idx._4(jsValue)) + "/" + id)) acceptJson() delete()//too externalize
     } yield d) map {
       resp => resp.status match {
-        case 204 => {
-          println("index deleted")
-
-          this
-        }
+        case 204 => this
       }
     }
 
