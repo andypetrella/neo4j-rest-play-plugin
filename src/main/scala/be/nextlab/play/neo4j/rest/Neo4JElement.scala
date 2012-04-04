@@ -404,7 +404,7 @@ object Neo4JElement {
 
 }
 
-object BaseNode {
+object Node {
 
   import Neo4JElement._
 
