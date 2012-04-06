@@ -163,7 +163,7 @@ case class Node(jsValue: JsObject, indexes: Seq[(String, Boolean, String, JsObje
           neo.request(Left(_properties)) acceptJson() put (d) map {
             resp =>
               resp.status match {
-                case 204 => Node(JsObject(("data" -> d) +: this.jsValue.fields.filterNot(_._1 == "data")), indexes)
+                case 204 => Node(JsObject(("data" -> d) +: this.jsValue.fields.filterNot(_._1 == "data")), this.indexes)
                 case x => throw new IllegalStateException("TODO : update props error " + x + "(" + d + ")")
               }
           }
@@ -210,7 +210,9 @@ case class Node(jsValue: JsObject, indexes: Seq[(String, Boolean, String, JsObje
   def deleteFromIndex(idx: (String, Boolean, String, JsObject => JsValue))(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] =
     (for {
       r <- neo.root;
-      d <- neo.request(Left(r._nodeIndex + "/" + idx._1 + "/" + idx._3 + "/" + jsToString(idx._4(jsValue)) + "/" + id)) acceptJson() delete()//too externalize
+      //todo ?? cannot do that because we cannot assert that the current node is not already updated with new properties
+      // d <- neo.request(Left(r._nodeIndex + "/" + idx._1 + "/" + idx._3 + "/" + jsToString(idx._4(jsValue)) + "/" + id)) acceptJson() delete()//too externalize
+      d <- neo.request(Left(r._nodeIndex + "/" + idx._1 + "/" + idx._3 + "/" + id)) acceptJson() delete()//too externalize
     } yield d) map {
       resp => resp.status match {
         case 204 => this
