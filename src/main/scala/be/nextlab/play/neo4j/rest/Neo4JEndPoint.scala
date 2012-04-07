@@ -37,7 +37,8 @@ case class Neo4JEndPoint(protocol: String, host: String, port: Int, credentials:
   } getOrElse resolveFrom(from)
 
 
-  lazy val root:Promise[Root] = serviceRootUrl flatMap {
+  //In order to keep things using Promise, we use pure to create it after having waited for the root
+  lazy val root:Promise[Root] = Promise.pure((serviceRootUrl flatMap {
     rootUrl => request(Left(rootUrl)) acceptJson() get() map {
       resp =>
         resp.status match {
@@ -50,7 +51,7 @@ case class Neo4JEndPoint(protocol: String, host: String, port: Int, credentials:
           case status => throw new IllegalStateException("The status is not ok " + status)
         }
     }
-  }
+  }).await.get)
 }
 
 case class WSRequestHolderW(w:WSRequestHolder) {
