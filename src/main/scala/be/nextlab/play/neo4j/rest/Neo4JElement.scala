@@ -66,7 +66,7 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
 
   def createNode(n: Option[Node])(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] = {
     val holder: WSRequestHolder = neo.request(Left(_node)) acceptJson()
-
+    
     (n match {
       case None => holder post (JsObject(Seq()))
       case Some(node) => holder post (node.data)
@@ -74,14 +74,18 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
       resp =>
         resp.status match {
           case 201 => resp.json match {
-            case jo: JsObject => Node(jo, n map {
-              _.indexes
-            } getOrElse (Nil))
+            case jo: JsObject => Node(jo, n map { _.indexes } getOrElse (Nil))
             case _ => throw new IllegalStateException("Create Node must return a JsObject")
           }
         }
     } flatMap {
-      case o: Node => o.applyIndexes //apply indexes at the end
+      case o: Node => o.applyIndexes map {//apply indexes at the end
+        case f:Failure => {
+          o.delete //WARN:: we delete because indexes has failed...
+          f
+        }
+        case x => x
+      }
       case _ => {
         throw new IllegalStateException("TODO")
       }
@@ -181,8 +185,10 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement { this:E =>
 
 
   def applyIndexes(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] = indexes.foldLeft(Promise.pure(this): Promise[Neo4JElement]) {
-    (pr, idx) => pr flatMap {
-      _ => applyIndex(idx)
+    (pr, idx) => pr flatMap { _ match {
+        case f:Failure => Promise.pure(f.asInstanceOf[Neo4JElement])
+        case _ => applyIndex(idx)
+      }
     }
   }
 
@@ -192,7 +198,8 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement { this:E =>
       i <- neo.request(Left(index(r) + "/" + idx._1 + (if (idx._2) "?unique" else ""))) post (JsObject(Seq("key" -> JsString(idx._3), "value" -> idx._4(jsValue), "uri" -> JsString(self))))
     } yield i) map {
       resp => resp.status match {
-        case 201 => this
+        case 201 => this //index value created
+        case 200 => this //index value updated
       }
     }
 
