@@ -1,12 +1,13 @@
 package be.nextlab.play.neo4j.rest
 
 import scalaz.Monoid
-import play.api.libs.json._
 import play.api.libs.json.Json._
 import Neo4JEndPoint._
 import play.api.libs.concurrent.Promise
 import play.api.libs.ws.WS.WSRequestHolder
 import collection.Seq
+import play.api.libs.json._
+import scala.Predef._
 
 
 /**
@@ -121,6 +122,10 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
           case 200 => resp.json match {
             case j: JsObject => CypherResult(j)
             case _ => throw new IllegalStateException("Get Node must return a JsObject")
+          }
+          case x if x == 400 => resp.json match {
+            case j: JsObject => Failure(j, x, "Fail to execute cypher")
+            case _ => throw new IllegalStateException("Not recognized failure")
           }
         }
     }
