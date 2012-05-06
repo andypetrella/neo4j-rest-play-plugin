@@ -6,6 +6,8 @@ import play.api.test.Helpers._
 import Neo4JTestHelpers._
 import Neo4JElement._
 import play.api.libs.json.{JsValue, JsNumber, JsString, JsObject}
+import scala.Predef._
+import scala._
 
 /**
  *
@@ -38,7 +40,7 @@ object NodeTest extends Specification {
     } ^
       "Create a new Node w/ Properties " ! neoApp {
         val root = endPoint.root
-        val node: Node = Node(JsObject(Seq("data" -> JsObject(Seq("a" -> JsString("valueForA"))))))
+        val node: Node = Node(Nil, "a" -> JsString("valueForA"))
         await(root flatMap (_.createNode(Some(node)))) must be like {
           case n: Node => {
             (n.id must be_>=(0)) and (n.self must not beEmpty) and (n.data must be_==(node.data))
@@ -50,7 +52,7 @@ object NodeTest extends Specification {
     "Update Node " ^ {
     "Update the data of Node w/ Properties " ! neoApp {
       val root = endPoint.root
-      val node: Node = Node(JsObject(Seq("data" -> JsObject(Seq("a" -> JsString("valueForA"))))))
+      val node: Node = Node(Nil, "a" -> JsString("valueForA"))
       val newProps: JsObject = JsObject(Seq("a" -> JsString("newValueForA"), "b" -> JsNumber(1)))
       await(for (
         r <- root;
@@ -67,7 +69,7 @@ object NodeTest extends Specification {
     "Delete Node" ^ {
     "Delete a Node " ! neoApp {
       val root = endPoint.root
-      val node: Node = Node(JsObject(Seq("data" -> JsObject(Seq("a" -> JsString("valueForA"))))))
+      val node: Node = Node(Nil, "a" -> JsString("valueForA"))
       await(for (
         r <- root;
         c <- r.createNode(Some(node));
@@ -90,7 +92,7 @@ object NodeTest extends Specification {
         val value: JsString = JsString(rnds)
         val indexName: String = "uniqueNodeIndex"
         val indexFunction: (JsObject) => JsValue = (js: JsObject) => (js \ "data").as[JsObject] \ key
-        val node: Node = Node(JsObject(Seq("data" -> JsObject(Seq(key -> value)))), Seq((indexName, true, "uniqueKey", indexFunction)))
+        val node: Node = Node(Seq((indexName, true, "uniqueKey", indexFunction)), key -> value)
         await(for (
           r <- root;
           c <- r.createNode(Some(node));
@@ -110,14 +112,14 @@ object NodeTest extends Specification {
           val indexName: String = "uniqueNodeIndex"
           val indexFunction: (JsObject) => JsValue = (js: JsObject) => (js \ "data").as[JsObject] \ key
 
-          val props: JsObject = JsObject(Seq(key -> value))
-          val newProps: JsObject = JsObject(Seq(key -> newValue))
-          val node: Node = Node(JsObject(Seq("data" -> props)), Seq((indexName, true, "uniqueKey", indexFunction)))
+          val props = Seq(key -> value)
+          val newProps = Seq(key -> newValue)
+          val node: Node = Node(Seq((indexName, true, "uniqueKey", indexFunction)), props:_*)
 
           await(for (
             r <- root;
             c <- r.createNode(Some(node));
-            u <- c.asInstanceOf[Node].properties(Some(newProps));
+            u <- c.asInstanceOf[Node].properties(Some(JsObject(newProps)));
             f <- r.getUniqueNode(("uniqueKey", newValue))(indexName)
           ) yield f) must beSome[Neo4JElement].which {
             n =>
@@ -135,14 +137,14 @@ object NodeTest extends Specification {
           val indexName: String = "uniqueNodeIndex"
           val indexFunction: (JsObject) => JsValue = (js: JsObject) => (js \ "data").as[JsObject] \ key
 
-          val props: JsObject = JsObject(Seq(key -> value))
-          val newProps: JsObject = JsObject(Seq(key -> newValue))
-          val node: Node = Node(JsObject(Seq("data" -> props)), Seq((indexName, true, "uniqueKey", indexFunction)))
+          val props = Seq(key -> value)
+          val newProps = Seq(key -> newValue)
+          val node: Node = Node(Seq((indexName, true, "uniqueKey", indexFunction)), props:_*)
 
           await(for (
             r <- root;
             c <- r.createNode(Some(node));
-            u <- c.asInstanceOf[Node].properties(Some(newProps));
+            u <- c.asInstanceOf[Node].properties(Some(JsObject(newProps)));
             f <- r.getUniqueNode(("uniqueKey", value))(indexName)
           ) yield f) must beNone
         } ^
@@ -154,9 +156,9 @@ object NodeTest extends Specification {
           val indexName: String = "uniqueNodeIndex"
           val indexFunction: (JsObject) => JsValue = (js: JsObject) => (js \ "data").as[JsObject] \ key
 
-          val props: JsObject = JsObject(Seq(key -> value))
-          val newProps: JsObject = JsObject(Seq(key -> newValue))
-          val node: Node = Node(JsObject(Seq("data" -> props)), Seq((indexName, true, "uniqueKey", indexFunction)))
+          val props = Seq(key -> value)
+          val newProps = Seq(key -> newValue)
+          val node: Node = Node(Seq((indexName, true, "uniqueKey", indexFunction)), props:_*)
 
           //inject the given js object into the node
           def inject(node: Node, js: JsObject) = Node(
@@ -167,7 +169,7 @@ object NodeTest extends Specification {
           await(for (
             r <- root;
             c <- r.createNode(Some(node));
-            u <- (inject(c.asInstanceOf[Node], JsObject(Seq("data" -> newProps)))).properties(Some(newProps));
+            u <- (inject(c.asInstanceOf[Node], JsObject(Seq("data" -> JsObject(newProps))))).properties(Some(JsObject(newProps)));
             f <- r.getUniqueNode(("uniqueKey", newValue))(indexName)
           ) yield f) must beSome[Neo4JElement].which {
             n =>
@@ -185,9 +187,9 @@ object NodeTest extends Specification {
           val indexName: String = "uniqueNodeIndex"
           val indexFunction: (JsObject) => JsValue = (js: JsObject) => (js \ "data").as[JsObject] \ key
 
-          val props: JsObject = JsObject(Seq(key -> value))
-          val newProps: JsObject = JsObject(Seq(key -> newValue))
-          val node: Node = Node(JsObject(Seq("data" -> props)), Seq((indexName, true, "uniqueKey", indexFunction)))
+          val props = Seq(key -> value)
+          val newProps = Seq(key -> newValue)
+          val node: Node = Node(Seq((indexName, true, "uniqueKey", indexFunction)), props:_*)
 
           //inject the given js object into the node
           def inject(node: Node, js: JsObject) = Node(
@@ -198,7 +200,7 @@ object NodeTest extends Specification {
           await(for (
             r <- root;
             c <- r.createNode(Some(node));
-            u <- (inject(c.asInstanceOf[Node], JsObject(Seq("data" -> newProps)))).properties(Some(newProps));
+            u <- (inject(c.asInstanceOf[Node], JsObject(Seq("data" -> JsObject(newProps))))).properties(Some(JsObject(newProps)));
             f <- r.getUniqueNode(("uniqueKey", value))(indexName)
           ) yield f) must beNone
         } ^
@@ -209,7 +211,7 @@ object NodeTest extends Specification {
           val indexName: String = "uniqueNodeIndex"
           val indexFunction: (JsObject) => JsValue = (js: JsObject) => (js \ "data").as[JsObject] \ key
 
-          val node: Node = Node(JsObject(Seq("data" -> JsObject(Seq(key -> value)))), Seq((indexName, true, "uniqueKey", indexFunction)))
+          val node: Node = Node(Seq((indexName, true, "uniqueKey", indexFunction)), key -> value)
 
           await(for (
             r <- root;

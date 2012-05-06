@@ -2,12 +2,12 @@ package be.nextlab.play.neo4j.rest
 
 import scalaz.Monoid
 import play.api.libs.json.Json._
-import Neo4JEndPoint._
 import play.api.libs.concurrent.Promise
 import play.api.libs.ws.WS.WSRequestHolder
 import collection.Seq
-import play.api.libs.json._
+import be.nextlab.play.neo4j.rest.Neo4JEndPoint._
 import scala.Predef._
+import play.api.libs.json._
 
 
 /**
@@ -474,6 +474,8 @@ object Neo4JElement {
 
 }
 
+
+
 object Node {
 
   import Neo4JElement._
@@ -491,6 +493,12 @@ object Node {
 
     val zero = Node(JsObject(Seq("data" -> JsObject(Seq()))))
   }
+
+  def apply(indexes: Seq[(String, Boolean, String, JsObject => JsValue)], data:(String, JsValue)*):Node =
+    Node(
+      JsObject(fields=Seq( "data" -> JsObject(data.toSeq))),
+      indexes=indexes
+    )
 
 }
 
@@ -511,5 +519,18 @@ object Relation {
 
     val zero = Relation(JsObject(Seq("data" -> JsObject(Seq()))))
   }
+
+  def apply(start:Either[String, Node], end:Either[String, Node], `type`:String, indexes: Seq[(String, Boolean, String, JsObject => JsValue)], data:(String, JsValue)*):Relation =
+    Relation(
+      jsValue = JsObject(
+        Seq(
+          ("data" -> JsObject(fields=data.toSeq)),
+          ("start" -> JsString(start.fold(s=>s, n=>n.self))),
+          ("end" -> JsString(end.fold(s=>s, n=>n.self))),
+          ("type" -> JsString(`type`))
+        )
+      ),
+      indexes=indexes
+    )
 
 }

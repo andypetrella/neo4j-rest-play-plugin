@@ -27,32 +27,41 @@ object RelationTest extends Specification {
           root <- endPoint.root;
           ref <- root.referenceNode;
           newNode <- root.createNode(None);
-          rel <- ref.asInstanceOf[Node].createRelationship(Relation(JsObject(Seq("type" -> JsString("TEST"), "end" -> JsString(newNode.asInstanceOf[Node].self), "data" -> JsObject(Seq())))))
+          rel <- ref.asInstanceOf[Node].createRelationship(Relation(
+            Right(ref.asInstanceOf[Node]),
+            Right(newNode.asInstanceOf[Node]),
+            "TEST",
+            Nil)
+          )
         ) yield (ref, rel, newNode)) match {
 
-          case (ref:Node, r:Relation, newNode:Node) => (r.self must be_!=("")) and (r.`type` must be_==("TEST")) and (r.end.await.get must be_==(newNode)) and (r.start.await.get must be_==(ref))
+          case (ref: Node, r: Relation, newNode: Node) => (r.self must be_!=("")) and (r.`type` must be_==("TEST")) and (r.end.await.get must be_==(newNode)) and (r.start.await.get must be_==(ref))
           case _ => ko("bad match")
 
         }
       } ^
-      "Get outgoing relation of the Reference Node" ! neoApp {
-        await(for (
-          root    <- endPoint.root;
-          ref     <- root.referenceNode;
-          newNode <- root.createNode(None);
-          rel     <- ref.asInstanceOf[Node].createRelationship(Relation(JsObject(Seq("type" -> JsString("TEST"), "end" -> JsString(newNode.asInstanceOf[Node].self), "data" -> JsObject(Seq())))));
-          rels    <- ref.asInstanceOf[Node].outgoingTypedRelationships(Seq("TEST"))
-        ) yield (ref, rel, rels)) match {
+        "Get outgoing relation of the Reference Node" ! neoApp {
+          await(for (
+            root <- endPoint.root;
+            ref <- root.referenceNode;
+            newNode <- root.createNode(None);
+            rel <- ref.asInstanceOf[Node].createRelationship(Relation(
+              Right(ref.asInstanceOf[Node]),
+              Right(newNode.asInstanceOf[Node]),
+              "TEST", Nil)
+            );
+            rels <- ref.asInstanceOf[Node].outgoingTypedRelationships(Seq("TEST"))
+          ) yield (ref, rel, rels)) match {
 
-          case (ref:Node, r:Relation, rs:Seq[Relation]) => rs match {
-            case Nil => ko("Must return at least one Relation")
-            case xs => xs must contain(r)
+            case (ref: Node, r: Relation, rs: Seq[Relation]) => rs match {
+              case Nil => ko("Must return at least one Relation")
+              case xs => xs must contain(r)
+            }
+            case _ => ko("bad match")
+
           }
-          case _ => ko("bad match")
 
         }
-
-      }
 
     }
 

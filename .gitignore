@@ -6,3 +6,6 @@ tmp
 .history
 *.iml
 .idea
+.settings
+.project
+.classpath
