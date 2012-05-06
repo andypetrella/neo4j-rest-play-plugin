@@ -7,6 +7,7 @@ import play.api.libs.ws.WS.WSRequestHolder
 import collection.Seq
 import be.nextlab.play.neo4j.rest.Neo4JEndPoint._
 import scala.Predef._
+import java.lang.IllegalStateException
 import play.api.libs.json._
 
 
@@ -45,7 +46,6 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
   def referenceNode(implicit neo: Neo4JEndPoint) = getNode(_referenceNode)
 
 
-
   //////NODE/////
   lazy val _node = (jsValue \ "node").as[String]
 
@@ -67,7 +67,7 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
 
   def createNode(n: Option[Node])(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] = {
     val holder: WSRequestHolder = neo.request(Left(_node)) acceptJson()
-    
+
     (n match {
       case None => holder post (JsObject(Seq()))
       case Some(node) => holder post (node.data)
@@ -75,13 +75,16 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
       resp =>
         resp.status match {
           case 201 => resp.json match {
-            case jo: JsObject => Node(jo, n map { _.indexes } getOrElse (Nil))
+            case jo: JsObject => Node(jo, n map {
+              _.indexes
+            } getOrElse (Nil))
             case _ => throw new IllegalStateException("Create Node must return a JsObject")
           }
         }
     } flatMap {
-      case o: Node => o.applyIndexes map {//apply indexes at the end
-        case f:Failure => {
+      case o: Node => o.applyIndexes map {
+        //apply indexes at the end
+        case f: Failure => {
           o.delete //WARN:: we delete because indexes has failed...
           f
         }
@@ -93,8 +96,8 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
     }
   }
 
-  def getUniqueNode(kvp: (String, JsValue))(indexName: String)(implicit neo: Neo4JEndPoint): Promise[Option[Neo4JElement]] =
-    neo.request(Left(_nodeIndex + "/" + indexName + "/" + kvp._1 + "/" + jsToString(kvp._2))) get() map {
+  def getUniqueNode(key: String, value: JsValue)(indexName: String)(implicit neo: Neo4JEndPoint): Promise[Option[Neo4JElement]] =
+    neo.request(Left(_nodeIndex + "/" + indexName + "/" + key + "/" + jsToString(value))) get() map {
       resp => resp.status match {
         case 200 => resp.json match {
           case jo: JsObject => Some(Node(jo))
@@ -138,14 +141,17 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
 
 }
 
-sealed trait Entity[E <: Entity[E]] extends Neo4JElement { this:E =>
+case class Index(name: String, unique: Boolean, key: String, f: JsObject => JsValue)
+
+sealed trait Entity[E <: Entity[E]] extends Neo4JElement {
+  this: E =>
   type Js = JsObject
 
-  def indexes: Seq[(String, Boolean, String, JsObject => JsValue)]
+  def indexes: Seq[Index]
 
-  def build(j:JsObject, idxs:Seq[(String, Boolean, String, JsObject => JsValue)]):E
+  def build(j: JsObject, idxs: Seq[Index]): E
 
-  def index(r:Root):String
+  def index(r: Root): String
 
   //url to it self
   lazy val self = (jsValue \ "self").as[String]
@@ -158,6 +164,9 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement { this:E =>
 
   lazy val extensions = (jsValue \ "extensions").as[JsObject]
 
+  def updateData(data: (String, JsValue)*) =
+    build(JsObject(("data" -> JsObject(data.toSeq)) +: this.jsValue.fields.filterNot(_._1 == "data")), this.indexes)
+
 
   def properties(data: Option[JsObject])(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] =
     data match {
@@ -167,7 +176,7 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement { this:E =>
           neo.request(Left(_properties)) acceptJson() put (d) map {
             resp =>
               resp.status match {
-                case 204 => build(JsObject(("data" -> d) +: this.jsValue.fields.filterNot(_._1 == "data")), this.indexes)
+                case 204 => this.updateData(d.fields: _*)
                 case x => throw new IllegalStateException("TODO : update props error " + x + "(" + d + ")")
               }
           }
@@ -180,7 +189,7 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement { this:E =>
         resp =>
           resp.status match {
             case 200 => resp.json match {
-              case j: JsObject => build(JsObject(("data" -> j) +: this.jsValue.fields.filterNot(_._1 == "data")), indexes)
+              case j: JsObject => this.updateData(j.fields: _*)
               case _ => throw new IllegalStateException("Get Properties for Entity must return a JsObject")
             }
             case x => throw new IllegalStateException("TODO : get props error " + x)
@@ -190,17 +199,18 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement { this:E =>
 
 
   def applyIndexes(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] = indexes.foldLeft(Promise.pure(this): Promise[Neo4JElement]) {
-    (pr, idx) => pr flatMap { _ match {
-        case f:Failure => Promise.pure(f.asInstanceOf[Neo4JElement])
+    (pr, idx) => pr flatMap {
+      _ match {
+        case f: Failure => Promise.pure(f.asInstanceOf[Neo4JElement])
         case _ => applyIndex(idx)
       }
     }
   }
 
-  def applyIndex(idx: (String, Boolean, String, JsObject => JsValue))(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] =
+  def applyIndex(idx: Index)(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] =
     (for {
       r <- neo.root;
-      i <- neo.request(Left(index(r) + "/" + idx._1 + (if (idx._2) "?unique" else ""))) post (JsObject(Seq("key" -> JsString(idx._3), "value" -> idx._4(jsValue), "uri" -> JsString(self))))
+      i <- neo.request(Left(index(r) + "/" + idx.name + (if (idx.unique) "?unique" else ""))) post (JsObject(Seq("key" -> JsString(idx.key), "value" -> idx.f(jsValue), "uri" -> JsString(self))))
     } yield i) map {
       resp => resp.status match {
         case 201 => this //index value created
@@ -214,12 +224,12 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement { this:E =>
     }
   }
 
-  def deleteFromIndex(idx: (String, Boolean, String, JsObject => JsValue))(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] =
+  def deleteFromIndex(idx: Index)(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] =
     (for {
       r <- neo.root;
       //todo ?? cannot do that because we cannot assert that the current entity is not already updated with new properties
       // d <- neo.request(Left(index(r) + "/" + idx._1 + "/" + idx._3 + "/" + jsToString(idx._4(jsValue)) + "/" + id)) acceptJson() delete()//too externalize
-      d <- neo.request(Left(index(r) + "/" + idx._1 + "/" + idx._3 + "/" + id)) acceptJson() delete() //too externalize
+      d <- neo.request(Left(index(r) + "/" + idx.name + "/" + idx.key + "/" + id)) acceptJson() delete() //too externalize
     } yield d) map {
       resp => resp.status match {
         case 204 => this
@@ -246,7 +256,7 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement { this:E =>
 
 }
 
-case class Node(jsValue: JsObject, indexes: Seq[(String, Boolean, String, JsObject => JsValue)] = Nil) extends Entity[Node] {
+case class Node(jsValue: JsObject, indexes: Seq[Index] = Nil) extends Entity[Node] {
 
   import Neo4JElement._
 
@@ -260,29 +270,33 @@ case class Node(jsValue: JsObject, indexes: Seq[(String, Boolean, String, JsObje
   lazy val outgoingRelationships = (jsValue \ "outgoing_relationships").as[String]
 
   lazy val _createRelationship = (jsValue \ "create_relationship").as[String]
-  def createRelationship(r:Relation)(implicit neo:Neo4JEndPoint) =
-    neo.request(Left(_createRelationship)) acceptJson() post(JsObject(Seq(
+
+  def createRelationship(r: Relation)(implicit neo: Neo4JEndPoint) =
+    neo.request(Left(_createRelationship)) acceptJson() post (JsObject(Seq(
       "to" -> JsString(r._end),
       "type" -> JsString(r.`type`),
       "data" -> r.data
     ))) map {
       resp => resp.status match {
         case 201 => resp.json match {
-          case o:JsObject => Relation(o, r.indexes)
+          case o: JsObject => Relation(o, r.indexes)
           case x => throw new IllegalStateException("create relation must return a JsObject")
         }
       }
     }
 
   lazy val _outgoingTypedRelationships = (jsValue \ "outgoing_typed_relationships").as[String]
-  def outgoingTypedRelationships(types:Seq[String])(implicit neo:Neo4JEndPoint) =
+
+  def outgoingTypedRelationships(types: Seq[String])(implicit neo: Neo4JEndPoint) =
     neo.request(Left(_outgoingTypedRelationships.replace("{-list|&|types}", types.mkString("&")))) acceptJson() get() map {
       resp => resp.status match {
         case 200 => resp.json match {
-          case o:JsArray => o.value.map{j => j match {
-            case jo:JsObject => Relation(jo)
-            case x => throw new IllegalStateException("get typed relations must return a JsArray o JsObject only")
-          }}
+          case o: JsArray => o.value.map {
+            j => j match {
+              case jo: JsObject => Relation(jo)
+              case x => throw new IllegalStateException("get typed relations must return a JsArray o JsObject only")
+            }
+          }
           case x => throw new IllegalStateException("get typed relations must return a JsArray")
         }
       }
@@ -291,13 +305,13 @@ case class Node(jsValue: JsObject, indexes: Seq[(String, Boolean, String, JsObje
 
   def ++(other: Node)(implicit m: Monoid[Node]) = m append(this, other)
 
-  def build(j: JsObject, idxs: Seq[(String, Boolean, String, (JsObject) => JsValue)]) = Node(j, idxs)
+  def build(j: JsObject, idxs: Seq[Index]) = Node(j, idxs)
 
   def index(r: Root) = r._nodeIndex
 
 }
 
-case class Relation(jsValue: JsObject, indexes: Seq[(String, Boolean, String, JsObject => JsValue)] = Nil) extends Entity[Relation] {
+case class Relation(jsValue: JsObject, indexes: Seq[Index] = Nil) extends Entity[Relation] {
 
   import Neo4JElement._
 
@@ -305,15 +319,21 @@ case class Relation(jsValue: JsObject, indexes: Seq[(String, Boolean, String, Js
 
   //START
   lazy val _start = (jsValue \ "start").as[String]
-  def start(implicit neo:Neo4JEndPoint) = neo.root flatMap {_.getNode(_start)}
+
+  def start(implicit neo: Neo4JEndPoint) = neo.root flatMap {
+    _.getNode(_start)
+  }
 
   //END
   lazy val _end = (jsValue \ "end").as[String]
-  def end(implicit neo:Neo4JEndPoint) = neo.root flatMap {_.getNode(_end)}
+
+  def end(implicit neo: Neo4JEndPoint) = neo.root flatMap {
+    _.getNode(_end)
+  }
 
   def ++(other: Relation)(implicit m: Monoid[Relation]) = m append(this, other)
 
-  def build(j: JsObject, idxs: Seq[(String, Boolean, String, (JsObject) => JsValue)]) = Relation(j, idxs)
+  def build(j: JsObject, idxs: Seq[Index]) = Relation(j, idxs)
 
   def index(r: Root) = r._relationshipIndex
 
@@ -475,7 +495,6 @@ object Neo4JElement {
 }
 
 
-
 object Node {
 
   import Neo4JElement._
@@ -486,7 +505,9 @@ object Node {
         case o: JsObject => o
         case x => throw new IllegalStateException("Cannot add two nodes : " + s1 + " and " + s2)
       }
-      val newFields: Seq[(String, JsValue)] = s1.jsValue.fields.filter(_._1 != "data") ++ s2.jsValue.fields.filter(f => f._1 != "data" && s1.jsValue.fields.find(_._1 == f._1).isEmpty)
+      val newFields: Seq[(String, JsValue)] = s1.jsValue.fields.filter(_._1 != "data") ++
+        s2.jsValue.fields.filter(f => f._1 != "data" && s1.jsValue.fields.find(_._1 == f._1).isEmpty)
+
       val allNewFields: Seq[(String, JsValue)] = ("data", newData) +: newFields
       Node(JsObject(allNewFields), s1.indexes ++ (s2.indexes diff s1.indexes))
     }
@@ -494,10 +515,10 @@ object Node {
     val zero = Node(JsObject(Seq("data" -> JsObject(Seq()))))
   }
 
-  def apply(indexes: Seq[(String, Boolean, String, JsObject => JsValue)], data:(String, JsValue)*):Node =
+  def apply(indexes: Seq[Index], data: (String, JsValue)*): Node =
     Node(
-      JsObject(fields=Seq( "data" -> JsObject(data.toSeq))),
-      indexes=indexes
+      JsObject(fields = Seq("data" -> JsObject(data.toSeq))),
+      indexes = indexes
     )
 
 }
@@ -512,7 +533,8 @@ object Relation {
         case o: JsObject => o
         case x => throw new IllegalStateException("Cannot add two relations : " + s1 + " and " + s2)
       }
-      val newFields: Seq[(String, JsValue)] = s1.jsValue.fields.filter(_._1 != "data") ++ s2.jsValue.fields.filter(f => f._1 != "data" && s1.jsValue.fields.find(_._1 == f._1).isEmpty)
+      val newFields: Seq[(String, JsValue)] = s1.jsValue.fields.filter(_._1 != "data") ++
+        s2.jsValue.fields.filter(f => f._1 != "data" && s1.jsValue.fields.find(_._1 == f._1).isEmpty)
       val allNewFields: Seq[(String, JsValue)] = ("data", newData) +: newFields
       Relation(JsObject(allNewFields), s1.indexes ++ (s2.indexes diff s1.indexes))
     }
@@ -520,17 +542,17 @@ object Relation {
     val zero = Relation(JsObject(Seq("data" -> JsObject(Seq()))))
   }
 
-  def apply(start:Either[String, Node], end:Either[String, Node], `type`:String, indexes: Seq[(String, Boolean, String, JsObject => JsValue)], data:(String, JsValue)*):Relation =
+  def apply(start: Either[String, Node], end: Either[String, Node], `type`: String, indexes: Seq[Index], data: (String, JsValue)*): Relation =
     Relation(
       jsValue = JsObject(
         Seq(
-          ("data" -> JsObject(fields=data.toSeq)),
-          ("start" -> JsString(start.fold(s=>s, n=>n.self))),
-          ("end" -> JsString(end.fold(s=>s, n=>n.self))),
+          ("data" -> JsObject(fields = data.toSeq)),
+          ("start" -> JsString(start.fold(s => s, n => n.self))),
+          ("end" -> JsString(end.fold(s => s, n => n.self))),
           ("type" -> JsString(`type`))
         )
       ),
-      indexes=indexes
+      indexes = indexes
     )
 
 }
