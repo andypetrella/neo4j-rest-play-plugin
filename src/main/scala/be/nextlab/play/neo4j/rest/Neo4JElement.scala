@@ -118,8 +118,8 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
   //////CYPHER/////
   lazy val _cypher = (jsValue \ "cypher").as[String]
 
-  def cypher(query: JsObject)(implicit neo: Neo4JEndPoint) =
-    neo.request(Left(_cypher)) acceptJson() post (query) map {
+  def cypher(c: Cypher)(implicit neo: Neo4JEndPoint) =
+    neo.request(Left(_cypher)) acceptJson() post (c.toQuery) map {
       resp =>
         resp.status match {
           case 200 => resp.json match {
@@ -139,6 +139,13 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
   lazy val _relationshipIndex = (jsValue \ "relationship_index").as[String]
 
 
+}
+
+case class Cypher(query:String, params:(String, JsValue)*) {
+  def toQuery = JsObject(Seq(
+    "query" -> JsString(query),
+    "params" -> JsObject(params.toSeq)
+  ))
 }
 
 case class Index(name: String, unique: Boolean, key: String, f: JsObject => JsValue)
