@@ -5,11 +5,14 @@ import play.api.libs.json.Json._
 import play.api.libs.concurrent.Promise
 import play.api.libs.ws.WS.WSRequestHolder
 import collection.Seq
+import be.nextlab.play.neo4j.rest.{Neo4JEndPoint => NEP}
 import be.nextlab.play.neo4j.rest.Neo4JEndPoint._
 import scala.Predef._
 import java.lang.IllegalStateException
 import play.api.libs.json._
-
+import scalaz.{Failure => KO, Success => OK, _}
+import scalaz.Scalaz._
+import ValidationPromised._
 
 /**
  * User: andy
@@ -23,6 +26,7 @@ sealed abstract class Neo4JElement {
 case class Root(jsValue: JsObject) extends Neo4JElement {
 
   import Neo4JElement._
+  import ValidationPromised._
 
   type Js = JsObject
 
@@ -43,92 +47,87 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
   //////REFERENCE/////
   lazy val _referenceNode = (jsValue \ "reference_node").as[String]
 
-  def referenceNode(implicit neo: Neo4JEndPoint) = getNode(_referenceNode)
+  def referenceNode(implicit neo: NEP) = getNode(_referenceNode)
 
 
   //////NODE/////
   lazy val _node = (jsValue \ "node").as[String]
 
-  def getNode(id: Int)(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] = getNode(_node + "/" + id)
+  def getNode(id: Int)(implicit neo: NEP): Compute[Node] = getNode(_node + "/" + id)
 
-  def getNode(url: String)(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] = neo.request(Left(url)) acceptJson() get() map {
+  def getNode(url: String)(implicit neo: NEP): Compute[Node] = neo.request(Left(url)) acceptJson() get() map {
     resp =>
       resp.status match {
         case 200 => resp.json match {
-          case jo: JsObject => Node(jo)
-          case _ => throw new IllegalStateException("Get Node must return a JsObject")
+          case jo: JsObject => OK(Node(jo))
+          case _ => KO(Left(NonEmptyList("Get Node must return a JsObject")))
         }
         case 404 => resp.json match {
-          case jo: JsObject => Failure(jo, 404, "Node not Found")
-          case _ => throw new IllegalStateException("Get Node (errored) must return a JsObject")
+          case jo: JsObject => KO(Right(Failure(jo, 404, "Node not Found")))
+          case _ => KO(Left(NonEmptyList("Get Node (404) must return a JsObject")))
         }
       }
   }
 
-  def createNode(n: Option[Node])(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] = {
+  def createNode(n: Option[Node])(implicit neo: NEP): Compute[Node] = {
     val holder: WSRequestHolder = neo.request(Left(_node)) acceptJson()
 
-    (n match {
+    ((n match {
       case None => holder post (JsObject(Seq()))
       case Some(node) => holder post (node.data)
-    }) map {
-      resp =>
-        resp.status match {
-          case 201 => resp.json match {
-            case jo: JsObject => Node(jo, n map {
-              _.indexes
-            } getOrElse (Nil))
-            case _ => throw new IllegalStateException("Create Node must return a JsObject")
-          }
+    }) map { resp =>
+      resp.status match {
+        case 201 => resp.json match {
+          case jo: JsObject => OK(Node(jo, n map { _.indexes } getOrElse (Nil)))
+          case _ => KO(Left(NonEmptyList("Create Node must return a JsObject")))
         }
-    } flatMap {
-      case o: Node => o.applyIndexes map {
-        //apply indexes at the end
-        case f: Failure => {
-          o.delete //WARN:: we delete because indexes has failed...
-          f
-        }
-        case x => x
       }
-      case _ => {
-        throw new IllegalStateException("TODO")
+    }) /~~>
+    { (n:Node) => 
+        n.applyIndexes /~> { (v:Validation[Aoutch, Node]) => Promise.pure(v.fold(
+          f => {
+            n.delete //WARN:: we delete because indexes has failed...
+            v
+          },
+          s => v
+        )) 
       }
     }
   }
 
-  def getUniqueNode(key: String, value: JsValue)(indexName: String)(implicit neo: Neo4JEndPoint): Promise[Option[Neo4JElement]] =
+  def getUniqueNode(key: String, value: JsValue)(indexName: String)(implicit neo: NEP): Compute[Option[Node]] =
     neo.request(Left(_nodeIndex + "/" + indexName + "/" + key + "/" + jsToString(value))) get() map {
-      resp => resp.status match {
+      resp => (resp.status match {
         case 200 => resp.json match {
-          case jo: JsObject => Some(Node(jo))
+          case jo: JsObject => OK(Some(Node(jo)))
           case ja: JsArray => ja.value match {
-            case Nil => None
-            case (a: JsObject) :: Nil => Some(Node(a))
-            case x => throw new IllegalStateException("Get UniqueNode must return a JsObject or a singleton array and not " + x)
+            case Nil => OK(None)
+            case (a: JsObject) :: Nil => OK(Some(Node(a)))
+            case x => KO(Left(NonEmptyList("Get UniqueNode must return a JsObject or a singleton array and not " + x)))
           }
-          case x => throw new IllegalStateException("Get Unique Node must return a JsObject or a singleton array and not " + x)
+          case x => KO(Left(NonEmptyList("Get Unique Node must return a JsObject or a singleton array and not " + x)))
         }
         case 404 => resp.json match {
-          case jo: JsObject => Some(Failure(jo, 404, "Unique Node not Found"))
-          case x => throw new IllegalStateException("Get Unique Node (errored) must return a JsObject and not " + x)
+          case jo: JsObject => KO(Failure(jo, 404, "Unique Node not Found"))
+          case x => KO(Left(NonEmptyList("Get Unique Node (errored) must return a JsObject and not " + x)))
         }
-      }
+      }).asInstanceOf[Validation[Aoutch, Option[Node]]]
     }
 
   //////CYPHER/////
   lazy val _cypher = (jsValue \ "cypher").as[String]
 
-  def cypher(c: Cypher)(implicit neo: Neo4JEndPoint) =
+  def cypher(c: Cypher)(implicit neo: NEP):Compute[CypherResult] =
     neo.request(Left(_cypher)) acceptJson() post (c.toQuery) map {
       resp =>
         resp.status match {
           case 200 => resp.json match {
-            case j: JsObject => CypherResult(j)
-            case _ => throw new IllegalStateException("Get Node must return a JsObject")
+            case j: JsObject => OK(CypherResult(j))
+            case _ => KO(Left(NonEmptyList("Get Node must return a JsObject")))
           }
           case x if x == 400 => resp.json match {
-            case j: JsObject => Failure(j, x, "Fail to execute cypher")
-            case _ => throw new IllegalStateException("Not recognized failure")
+            case j: JsObject => KO(Right(Failure(j, x, "Fail to execute cypher")))
+            case _ => KO(Left(NonEmptyList("Not recognized failure")))
           }
         }
     }
@@ -152,6 +151,10 @@ case class Index(name: String, unique: Boolean, key: String, f: JsObject => JsVa
 
 sealed trait Entity[E <: Entity[E]] extends Neo4JElement {
   this: E =>
+
+  import Neo4JElement._
+  import ValidationPromised._
+
   type Js = JsObject
 
   def indexes: Seq[Index]
@@ -174,88 +177,93 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement {
   def updateData(data: (String, JsValue)*) =
     build(JsObject(("data" -> JsObject(data.toSeq)) +: this.jsValue.fields.filterNot(_._1 == "data")), this.indexes)
 
-
-  def properties(data: Option[JsObject])(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] =
+  def properties(data: Option[JsObject])(implicit neo: NEP): Compute[E] =
     data match {
 
-      case Some(d) => this.deleteFromIndexes flatMap {
-        r => //indexes have been deleted => now update the properties
+      case Some(d) => {
+        val a:Compute[E] = this.deleteFromIndexes /~~> { e => //indexes have been deleted => now update the properties
           neo.request(Left(_properties)) acceptJson() put (d) map {
             resp =>
-              resp.status match {
-                case 204 => this.updateData(d.fields: _*)
-                case x => throw new IllegalStateException("TODO : update props error " + x + "(" + d + ")")
-              }
+              (resp.status match {
+                case 204 => OK(this.updateData(d.fields: _*))
+                case x => KO(Left(NonEmptyList("TODO : update props error " + x + "(" + d + ")")))
+              })
           }
-      } flatMap {
-        case o: E => o.applyIndexes //apply indexes after update
-        case _ => throw new IllegalStateException("TODO")
+        }
+        val b:Compute[E] = a /~~> { r:E =>
+          r.applyIndexes //apply indexes after update
+        }
+
+        b
       }
 
       case None => neo.request(Left(_properties)) acceptJson() get() map {
         resp =>
           resp.status match {
             case 200 => resp.json match {
-              case j: JsObject => this.updateData(j.fields: _*)
-              case _ => throw new IllegalStateException("Get Properties for Entity must return a JsObject")
+              case j: JsObject => OK(this.updateData(j.fields: _*))
+              case _ => KO(Left(NonEmptyList("Get Properties for Entity must return a JsObject")))
             }
-            case x => throw new IllegalStateException("TODO : get props error " + x)
+            case x => KO(Left(NonEmptyList("TODO : get props error " + x)))
           }
       }
     }
 
 
-  def applyIndexes(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] = indexes.foldLeft(Promise.pure(this): Promise[Neo4JElement]) {
-    (pr, idx) => pr flatMap {
-      _ match {
-        case f: Failure => Promise.pure(f.asInstanceOf[Neo4JElement])
-        case _ => applyIndex(idx)
+  def applyIndexes(implicit neo: NEP): Compute[E] = 
+    indexes.foldLeft(Promise.pure(OK(this)):Compute[E]) {
+      (pr, idx) => pr /~~> {x => x.applyIndex(idx)}
+    }
+    
+
+  def applyIndex(idx: Index)(implicit neo: NEP): Compute[E] =
+    neo.root /~~> { r => 
+      neo.request(
+        Left(index(r) + "/" + idx.name + (if (idx.unique) "?unique" else ""))
+      ) post (
+        JsObject(Seq(
+          "key" -> JsString(idx.key), 
+          "value" -> idx.f(jsValue), 
+          "uri" -> JsString(self)))
+      ) map { resp => 
+        resp.status match {
+          case x if x == 201 || x == 200 => OK(this) //index value created | updated
+        }
       }
     }
-  }
 
-  def applyIndex(idx: Index)(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] =
-    (for {
-      r <- neo.root;
-      i <- neo.request(Left(index(r) + "/" + idx.name + (if (idx.unique) "?unique" else ""))) post (JsObject(Seq("key" -> JsString(idx.key), "value" -> idx.f(jsValue), "uri" -> JsString(self))))
-    } yield i) map {
-      resp => resp.status match {
-        case 201 => this //index value created
-        case 200 => this //index value updated
-      }
+
+  def deleteFromIndexes(implicit neo: NEP): Compute[E] = 
+    indexes.foldLeft(Promise.pure(OK(this)):Compute[E]) {
+      (pr, idx) => pr /~~> { x => x.deleteFromIndex(idx) }
     }
 
-  def deleteFromIndexes(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] = indexes.foldLeft(Promise.pure(this): Promise[Neo4JElement]) {
-    (pr, idx) => pr flatMap {
-      _ => deleteFromIndex(idx)
-    }
-  }
-
-  def deleteFromIndex(idx: Index)(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] =
-    (for {
-      r <- neo.root;
+  def deleteFromIndex(idx: Index)(implicit neo: NEP): Compute[E] =
+    neo.root /~~> { r => 
       //todo ?? cannot do that because we cannot assert that the current entity is not already updated with new properties
       // d <- neo.request(Left(index(r) + "/" + idx._1 + "/" + idx._3 + "/" + jsToString(idx._4(jsValue)) + "/" + id)) acceptJson() delete()//too externalize
-      d <- neo.request(Left(index(r) + "/" + idx.name + "/" + idx.key + "/" + id)) acceptJson() delete() //too externalize
-    } yield d) map {
-      resp => resp.status match {
-        case 204 => this
+      neo.request(
+        Left(index(r) + "/" + idx.name + "/" + idx.key + "/" + id)
+      ) acceptJson() delete() map { resp => 
+        resp.status match {
+          case 204 => OK(this) //deleted
+        }
       }
     }
 
-  def delete(implicit neo: Neo4JEndPoint): Promise[Neo4JElement] = {
+  def delete(implicit neo: NEP): Compute[E] = {
     //delete from indexes first
-    deleteFromIndexes flatMap {
+    deleteFromIndexes /~~> {
       _ =>
         neo.request(Left(self)) acceptJson() delete() map {
           resp =>
             resp.status match {
-              case 204 => this
+              case 204 => OK(this)
               case x if x == 409 => resp.json match {
-                case jo: JsObject => Failure(jo, x, "Cannot Delete Entity with relations")
-                case _ => throw new IllegalStateException("delete Entity must return a JsObject")
+                case jo: JsObject => KO(Right(Failure(jo, x, "Cannot Delete Entity with relations")))
+                case _ => KO(Left(NonEmptyList("delete Entity must return a JsObject")))
               }
-              case x => throw new IllegalStateException("TODO : delete entity error " + x)
+              case x => KO(Left(NonEmptyList("TODO : delete entity error " + x)))
             }
         }
     }
@@ -266,6 +274,7 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement {
 case class Node(jsValue: JsObject, indexes: Seq[Index] = Nil) extends Entity[Node] {
 
   import Neo4JElement._
+  import ValidationPromised._
 
   lazy val traverse = (jsValue \ "traverse").as[String]
   lazy val pagedTraverse = (jsValue \ "paged_traverse").as[String]
@@ -278,7 +287,7 @@ case class Node(jsValue: JsObject, indexes: Seq[Index] = Nil) extends Entity[Nod
 
   lazy val _createRelationship = (jsValue \ "create_relationship").as[String]
 
-  def createRelationship(r: Relation)(implicit neo: Neo4JEndPoint) =
+  def createRelationship(r: Relation)(implicit neo: NEP):Compute[Relation] =
     neo.request(Left(_createRelationship)) acceptJson() post (JsObject(Seq(
       "to" -> JsString(r._end),
       "type" -> JsString(r.`type`),
@@ -286,25 +295,25 @@ case class Node(jsValue: JsObject, indexes: Seq[Index] = Nil) extends Entity[Nod
     ))) map {
       resp => resp.status match {
         case 201 => resp.json match {
-          case o: JsObject => Relation(o, r.indexes)
-          case x => throw new IllegalStateException("create relation must return a JsObject")
+          case o: JsObject => OK(Relation(o, r.indexes))
+          case x => KO(Left(NonEmptyList("create relation must return a JsObject")))
         }
       }
     }
 
   lazy val _outgoingTypedRelationships = (jsValue \ "outgoing_typed_relationships").as[String]
 
-  def outgoingTypedRelationships(types: Seq[String])(implicit neo: Neo4JEndPoint) =
+  def outgoingTypedRelationships(types: Seq[String])(implicit neo: NEP):Compute[Seq[Relation]] =
     neo.request(Left(_outgoingTypedRelationships.replace("{-list|&|types}", types.mkString("&")))) acceptJson() get() map {
       resp => resp.status match {
         case 200 => resp.json match {
-          case o: JsArray => o.value.map {
-            j => j match {
-              case jo: JsObject => Relation(jo)
-              case x => throw new IllegalStateException("get typed relations must return a JsArray o JsObject only")
+          case o: JsArray => o.value.foldLeft(OK(Seq()):Validation[Aoutch, Seq[Relation]]){
+            (acc, j) => (acc, j) match {
+              case (OK(s), (jo:JsObject)) => OK(Relation(jo) +: s)
+              case x => KO(Left(NonEmptyList("get typed relations must return a JsArray o JsObject only")))
             }
           }
-          case x => throw new IllegalStateException("get typed relations must return a JsArray")
+          case x => KO(Left(NonEmptyList("get typed relations must return a JsArray")))
         }
       }
     }
@@ -321,22 +330,19 @@ case class Node(jsValue: JsObject, indexes: Seq[Index] = Nil) extends Entity[Nod
 case class Relation(jsValue: JsObject, indexes: Seq[Index] = Nil) extends Entity[Relation] {
 
   import Neo4JElement._
+  import ValidationPromised._
 
   lazy val `type` = (jsValue \ "type").as[String]
 
   //START
   lazy val _start = (jsValue \ "start").as[String]
 
-  def start(implicit neo: Neo4JEndPoint) = neo.root flatMap {
-    _.getNode(_start)
-  }
+  def start(implicit neo: NEP) = neo.root /~~> { root => root.getNode(_start) }
 
   //END
   lazy val _end = (jsValue \ "end").as[String]
 
-  def end(implicit neo: Neo4JEndPoint) = neo.root flatMap {
-    _.getNode(_end)
-  }
+  def end(implicit neo: NEP) = neo.root /~~> { _.getNode(_end) }
 
   def ++(other: Relation)(implicit m: Monoid[Relation]) = m append(this, other)
 
@@ -379,6 +385,9 @@ case class Empty() extends Neo4JElement {
 }
 
 object Neo4JElement {
+
+  type Aoutch = Either[NonEmptyList[String], Failure]
+  type Compute[E] = ValidationPromised[Aoutch, E]
 
   implicit def jsToString(js: JsValue): String = js match {
     case o: JsObject => o.value.toString()

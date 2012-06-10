@@ -6,6 +6,9 @@ import play.api.libs.ws.WS
 import play.api.libs.ws.WS._
 import play.api.libs.concurrent.Promise
 import com.ning.http.client.Realm.AuthScheme
+import scalaz.{Failure => KO, Success => OK, _}
+import be.nextlab.play.neo4j.rest.Neo4JElement._
+
 
 /**
  * User: andy
@@ -38,17 +41,17 @@ case class Neo4JEndPoint(protocol: String, host: String, port: Int, credentials:
 
 
   //In order to keep things using Promise, we use pure to create it after having waited for the root
-  lazy val root:Promise[Root] = Promise.pure((serviceRootUrl flatMap {
+  lazy val root:Promise[Validation[Aoutch, Root]] = Promise.pure((serviceRootUrl flatMap {
     rootUrl => request(Left(rootUrl)) acceptJson() get() map {
       resp =>
         resp.status match {
           case 200 => {
             resp.json match {
-              case jo: JsObject => Root(jo)
-              case r => throw new IllegalStateException("The service root request must return a JsObject")
+              case jo: JsObject => OK(Root(jo))
+              case r: Failure => KO(Left(NonEmptyList("The service root request must return a JsObject")))
             }
           }
-          case status => throw new IllegalStateException("The status is not ok " + status)
+          case status => KO(Left(NonEmptyList("The status is not ok " + status)))
         }
     }
   }).await.get)
