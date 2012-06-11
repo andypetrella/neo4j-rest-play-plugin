@@ -53,51 +53,52 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
   //////NODE/////
   lazy val _node = (jsValue \ "node").as[String]
 
-  def getNode(id: Int)(implicit neo: NEP): Compute[Node] = getNode(_node + "/" + id)
+  def getNode(id: Int)(implicit neo: NEP): ValidationPromised[Aoutch, Node] = getNode(_node + "/" + id)
 
-  def getNode(url: String)(implicit neo: NEP): Compute[Node] = neo.request(Left(url)) acceptJson() get() map {
-    resp =>
-      resp.status match {
-        case 200 => resp.json match {
-          case jo: JsObject => OK(Node(jo))
-          case _ => KO(Left(NonEmptyList("Get Node must return a JsObject")))
+  def getNode(url: String)(implicit neo: NEP): ValidationPromised[Aoutch, Node] = 
+    neo.request(Left(url)) acceptJson() get() map {
+      resp =>
+        resp.status match {
+          case 200 => resp.json match {
+            case jo: JsObject => OK(Node(jo))
+            case _ => KO(Left(NonEmptyList("Get Node must return a JsObject")))
+          }
+          case 404 => resp.json match {
+            case jo: JsObject => KO(Failure(jo, 404, "Node not Found").right[NonEmptyList[String]])
+            case _ => KO(NonEmptyList("Get Node (404) must return a JsObject").left[Failure])
+          }
         }
-        case 404 => resp.json match {
-          case jo: JsObject => KO(Right(Failure(jo, 404, "Node not Found")))
-          case _ => KO(Left(NonEmptyList("Get Node (404) must return a JsObject")))
-        }
-      }
-  }
+    } transformer
 
-  def createNode(n: Option[Node])(implicit neo: NEP): Compute[Node] = {
+  def createNode(n: Option[Node])(implicit neo: NEP): ValidationPromised[Aoutch, Node] = {
     val holder: WSRequestHolder = neo.request(Left(_node)) acceptJson()
 
-    ((n match {
-      case None => holder post (JsObject(Seq()))
-      case Some(node) => holder post (node.data)
-    }) map { resp =>
-      resp.status match {
-        case 201 => resp.json match {
-          case jo: JsObject => OK(Node(jo, n map { _.indexes } getOrElse (Nil)))
-          case _ => KO(Left(NonEmptyList("Create Node must return a JsObject")))
-        }
-      }
-    }) /~~>
-    { (n:Node) => 
-        n.applyIndexes /~> { (v:Validation[Aoutch, Node]) => Promise.pure(v.fold(
+    for {
+      n <- ((n match {
+          case None => holder post (JsObject(Seq()))
+          case Some(node) => holder post (node.data)
+        }) map { resp =>
+          resp.status match {
+            case 201 => resp.json match {
+              case jo: JsObject => OK(Node(jo, n map { _.indexes } getOrElse (Nil)))
+              case _ => KO(NonEmptyList("Create Node must return a JsObject").left[Failure])
+            }
+          }
+        }) transformer;
+      x <- n.applyIndexes /~> { v => Promise.pure(v.fold(
           f => {
             n.delete //WARN:: we delete because indexes has failed...
             v
           },
           s => v
-        )) 
+        )) transformer
       }
-    }
+    } yield n
   }
 
-  def getUniqueNode(key: String, value: JsValue)(indexName: String)(implicit neo: NEP): Compute[Option[Node]] =
+  def getUniqueNode(key: String, value: JsValue)(indexName: String)(implicit neo: NEP): ValidationPromised[Aoutch, Option[Node]] =
     neo.request(Left(_nodeIndex + "/" + indexName + "/" + key + "/" + jsToString(value))) get() map {
-      resp => (resp.status match {
+      resp => resp.status match {
         case 200 => resp.json match {
           case jo: JsObject => OK(Some(Node(jo)))
           case ja: JsArray => ja.value match {
@@ -108,16 +109,16 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
           case x => KO(Left(NonEmptyList("Get Unique Node must return a JsObject or a singleton array and not " + x)))
         }
         case 404 => resp.json match {
-          case jo: JsObject => KO(Failure(jo, 404, "Unique Node not Found"))
-          case x => KO(Left(NonEmptyList("Get Unique Node (errored) must return a JsObject and not " + x)))
+          case jo: JsObject => KO(Failure(jo, 404, "Unique Node not Found").right[NonEmptyList[String]])
+          case x => KO(NonEmptyList("Get Unique Node (errored) must return a JsObject and not " + x).left[Failure])
         }
-      }).asInstanceOf[Validation[Aoutch, Option[Node]]]
-    }
+      }
+    } transformer
 
   //////CYPHER/////
   lazy val _cypher = (jsValue \ "cypher").as[String]
 
-  def cypher(c: Cypher)(implicit neo: NEP):Compute[CypherResult] =
+  def cypher(c: Cypher)(implicit neo: NEP):ValidationPromised[Aoutch, CypherResult] =
     neo.request(Left(_cypher)) acceptJson() post (c.toQuery) map {
       resp =>
         resp.status match {
@@ -126,11 +127,11 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
             case _ => KO(Left(NonEmptyList("Get Node must return a JsObject")))
           }
           case x if x == 400 => resp.json match {
-            case j: JsObject => KO(Right(Failure(j, x, "Fail to execute cypher")))
-            case _ => KO(Left(NonEmptyList("Not recognized failure")))
+            case j: JsObject => KO(Failure(j, x, "Fail to execute cypher").right[NonEmptyList[String]])
+            case _ => KO(NonEmptyList("Not recognized failure").left[Failure])
           }
         }
-    }
+    } transformer
 
   //////NODE INDEXES/////
   lazy val _nodeIndex = (jsValue \ "node_index").as[String]
@@ -177,97 +178,95 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement {
   def updateData(data: (String, JsValue)*) =
     build(JsObject(("data" -> JsObject(data.toSeq)) +: this.jsValue.fields.filterNot(_._1 == "data")), this.indexes)
 
-  def properties(data: Option[JsObject])(implicit neo: NEP): Compute[E] =
+  def properties(data: Option[JsObject])(implicit neo: NEP): ValidationPromised[Aoutch, E] =
     data match {
 
-      case Some(d) => {
-        val a:Compute[E] = this.deleteFromIndexes /~~> { e => //indexes have been deleted => now update the properties
-          neo.request(Left(_properties)) acceptJson() put (d) map {
-            resp =>
-              (resp.status match {
-                case 204 => OK(this.updateData(d.fields: _*))
-                case x => KO(Left(NonEmptyList("TODO : update props error " + x + "(" + d + ")")))
-              })
-          }
-        }
-        val b:Compute[E] = a /~~> { r:E =>
-          r.applyIndexes //apply indexes after update
-        }
-
-        b
-      }
+      case Some(d) => for {
+          a <- this.deleteFromIndexes; 
+          u <- neo.request(Left(_properties)) acceptJson() put(d) map { resp =>
+                  /*indexes have been deleted => now update the properties*/
+                  resp.status match {
+                    case 204 => OK(this.updateData(d.fields: _*))
+                    case x => KO(NonEmptyList("TODO : update props error " + x + "(" + d + ")").left[Failure])
+                  }
+              } transformer;
+          b <- u.applyIndexes //apply indexes after update
+        } yield b
 
       case None => neo.request(Left(_properties)) acceptJson() get() map {
         resp =>
           resp.status match {
             case 200 => resp.json match {
               case j: JsObject => OK(this.updateData(j.fields: _*))
-              case _ => KO(Left(NonEmptyList("Get Properties for Entity must return a JsObject")))
+              case _ => KO(NonEmptyList("Get Properties for Entity must return a JsObject").left[Failure])
             }
-            case x => KO(Left(NonEmptyList("TODO : get props error " + x)))
+            case x => KO(NonEmptyList("TODO : get props error " + x).left[Failure])
           }
-      }
+      } transformer
     }
 
 
-  def applyIndexes(implicit neo: NEP): Compute[E] = 
-    indexes.foldLeft(Promise.pure(OK(this)):Compute[E]) {
+  def applyIndexes(implicit neo: NEP): ValidationPromised[Aoutch, E] = 
+    indexes.foldLeft(ValidationPromised(Promise.pure(OK(this))):ValidationPromised[Aoutch, E]) {
       (pr, idx) => pr /~~> {x => x.applyIndex(idx)}
     }
     
 
-  def applyIndex(idx: Index)(implicit neo: NEP): Compute[E] =
-    neo.root /~~> { r => 
-      neo.request(
-        Left(index(r) + "/" + idx.name + (if (idx.unique) "?unique" else ""))
-      ) post (
-        JsObject(Seq(
-          "key" -> JsString(idx.key), 
-          "value" -> idx.f(jsValue), 
-          "uri" -> JsString(self)))
-      ) map { resp => 
-        resp.status match {
-          case x if x == 201 || x == 200 => OK(this) //index value created | updated
-        }
-      }
-    }
+  def applyIndex(idx: Index)(implicit neo: NEP): ValidationPromised[Aoutch, E] =
+    for {
+      r <- neo.root;
+      v <- neo.request(
+          Left(index(r) + "/" + idx.name + (if (idx.unique) "?unique" else ""))
+        ) post (
+          JsObject(Seq(
+            "key" -> JsString(idx.key), 
+            "value" -> idx.f(jsValue), 
+            "uri" -> JsString(self)))
+        ) map { resp => 
+          resp.status match {
+            case x if x == 201 || x == 200 => OK(this) //index value created | updated
+            case x => KO(NonEmptyList("Cannot apply index : got status " + x).left[Failure])
+          }
+        } transformer
+    } yield v
 
 
-  def deleteFromIndexes(implicit neo: NEP): Compute[E] = 
-    indexes.foldLeft(Promise.pure(OK(this)):Compute[E]) {
+  def deleteFromIndexes(implicit neo: NEP): ValidationPromised[Aoutch, E] = 
+    indexes.foldLeft(ValidationPromised(Promise.pure(OK(this))):ValidationPromised[Aoutch, E]) {
       (pr, idx) => pr /~~> { x => x.deleteFromIndex(idx) }
     }
 
-  def deleteFromIndex(idx: Index)(implicit neo: NEP): Compute[E] =
-    neo.root /~~> { r => 
+  def deleteFromIndex(idx: Index)(implicit neo: NEP): ValidationPromised[Aoutch, E] =
+    for {
+    r <- neo.root;
       //todo ?? cannot do that because we cannot assert that the current entity is not already updated with new properties
       // d <- neo.request(Left(index(r) + "/" + idx._1 + "/" + idx._3 + "/" + jsToString(idx._4(jsValue)) + "/" + id)) acceptJson() delete()//too externalize
-      neo.request(
-        Left(index(r) + "/" + idx.name + "/" + idx.key + "/" + id)
-      ) acceptJson() delete() map { resp => 
-        resp.status match {
-          case 204 => OK(this) //deleted
-        }
-      }
-    }
+    v <-neo.request(
+          Left(index(r) + "/" + idx.name + "/" + idx.key + "/" + id)
+        ) acceptJson() delete() map { resp => 
+          resp.status match {
+            case 204 => OK(this) //deleted
+            case x => KO(NonEmptyList("Cannot delete from index : got status " + x).left[Failure])
+          }
+        } transformer
+    } yield v
 
-  def delete(implicit neo: NEP): Compute[E] = {
-    //delete from indexes first
-    deleteFromIndexes /~~> {
-      _ =>
-        neo.request(Left(self)) acceptJson() delete() map {
-          resp =>
-            resp.status match {
-              case 204 => OK(this)
-              case x if x == 409 => resp.json match {
-                case jo: JsObject => KO(Right(Failure(jo, x, "Cannot Delete Entity with relations")))
-                case _ => KO(Left(NonEmptyList("delete Entity must return a JsObject")))
+  def delete(implicit neo: NEP): ValidationPromised[Aoutch, E] =
+    for {
+      //delete from indexes first
+      d <- deleteFromIndexes 
+      v <- neo.request(Left(self)) acceptJson() delete() map {
+            resp =>
+              resp.status match {
+                case 204 => OK(this)
+                case x if x == 409 => resp.json match {
+                  case jo: JsObject => KO(Failure(jo, x, "Cannot Delete Entity with relations").right[NonEmptyList[String]])
+                  case _ => KO(NonEmptyList("delete Entity must return a JsObject").left[Failure])
+                }
+                case x => KO(NonEmptyList("TODO : delete entity error " + x).left[Failure])
               }
-              case x => KO(Left(NonEmptyList("TODO : delete entity error " + x)))
-            }
-        }
-    }
-  }
+          } transformer
+      } yield v
 
 }
 
@@ -287,7 +286,7 @@ case class Node(jsValue: JsObject, indexes: Seq[Index] = Nil) extends Entity[Nod
 
   lazy val _createRelationship = (jsValue \ "create_relationship").as[String]
 
-  def createRelationship(r: Relation)(implicit neo: NEP):Compute[Relation] =
+  def createRelationship(r: Relation)(implicit neo: NEP):ValidationPromised[Aoutch, Relation] =
     neo.request(Left(_createRelationship)) acceptJson() post (JsObject(Seq(
       "to" -> JsString(r._end),
       "type" -> JsString(r.`type`),
@@ -296,27 +295,27 @@ case class Node(jsValue: JsObject, indexes: Seq[Index] = Nil) extends Entity[Nod
       resp => resp.status match {
         case 201 => resp.json match {
           case o: JsObject => OK(Relation(o, r.indexes))
-          case x => KO(Left(NonEmptyList("create relation must return a JsObject")))
+          case x => KO(NonEmptyList("create relation must return a JsObject").left[Failure])
         }
       }
-    }
+    } transformer
 
   lazy val _outgoingTypedRelationships = (jsValue \ "outgoing_typed_relationships").as[String]
 
-  def outgoingTypedRelationships(types: Seq[String])(implicit neo: NEP):Compute[Seq[Relation]] =
+  def outgoingTypedRelationships(types: Seq[String])(implicit neo: NEP):ValidationPromised[Aoutch, Seq[Relation]] =
     neo.request(Left(_outgoingTypedRelationships.replace("{-list|&|types}", types.mkString("&")))) acceptJson() get() map {
       resp => resp.status match {
         case 200 => resp.json match {
           case o: JsArray => o.value.foldLeft(OK(Seq()):Validation[Aoutch, Seq[Relation]]){
             (acc, j) => (acc, j) match {
               case (OK(s), (jo:JsObject)) => OK(Relation(jo) +: s)
-              case x => KO(Left(NonEmptyList("get typed relations must return a JsArray o JsObject only")))
+              case x => KO(NonEmptyList("get typed relations must return a JsArray o JsObject only").left[Failure])
             }
           }
-          case x => KO(Left(NonEmptyList("get typed relations must return a JsArray")))
+          case x => KO(NonEmptyList("get typed relations must return a JsArray").left[Failure])
         }
       }
-    }
+    } transformer
 
 
   def ++(other: Node)(implicit m: Monoid[Node]) = m append(this, other)
@@ -387,7 +386,6 @@ case class Empty() extends Neo4JElement {
 object Neo4JElement {
 
   type Aoutch = Either[NonEmptyList[String], Failure]
-  type Compute[E] = ValidationPromised[Aoutch, E]
 
   implicit def jsToString(js: JsValue): String = js match {
     case o: JsObject => o.value.toString()

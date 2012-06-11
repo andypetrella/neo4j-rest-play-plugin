@@ -20,7 +20,7 @@ object RootTest extends Specification {
   def is = "Test service root" ^ {
 
     "Get it" ! neoApp {
-      await (endPoint.root) must be like {
+      await (endPoint.root.promised) must be like {
         case OK(r) => r.neo4jVersion must be_=== (plugin.neo4jVersion)
       }
     }
