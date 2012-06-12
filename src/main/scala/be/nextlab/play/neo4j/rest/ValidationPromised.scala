@@ -42,5 +42,8 @@ object ValidationPromised {
     implicit def pimpPromiseValidation[E,A](p:Promise[Validation[E, A]]):PromiseValidationW[E, A] = 
         PromiseValidationW(p)
 
+    implicit def pimpValidationPromised[E,A](p:ValidationPromised[E, A]):Promise[Validation[E, A]] = 
+        p.promised
+
 }
 

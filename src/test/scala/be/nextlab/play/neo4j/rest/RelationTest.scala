@@ -27,7 +27,7 @@ object RelationTest extends Specification {
     "Based on Node " ^ {
 
       "Create outgoing on Reference Node" ! neoApp {
-        await((for {
+        await(for {
           r <- endPoint.root;
           ref <- r.referenceNode;
           newNode <- r.createNode(None);
@@ -37,16 +37,16 @@ object RelationTest extends Specification {
                   "TEST",
                   Nil)
                 )
-          } yield (ref, rel, newNode)) promised
+          } yield (ref, rel, newNode)
         ) match {
           case OK(((ref: Node), (r: Relation), (newNode: Node))) => 
             (r.self must be_!=("")) and 
               (r.`type` must be_==("TEST")) and 
-              (await(r.end.promised) must be like {
+              (await(r.end) must be like {
                 case OK(n) if n == newNode => ok("got the good end")
                 case _ => ko("unable to retrieve the end node")
               }) and 
-              (await(r.start.promised) must be like {
+              (await(r.start) must be like {
                 case OK(n) if n == ref => ok("got the good start")
                 case _ => ko("unable to retrieve the start node")
               })
@@ -55,7 +55,7 @@ object RelationTest extends Specification {
         }
       } ^
         "Get outgoing relation of the Reference Node" ! neoApp {
-          await((for {
+          await(for {
             r <- endPoint.root;
             ref <- r.referenceNode;
             newNode <- r.createNode(None);
@@ -66,7 +66,7 @@ object RelationTest extends Specification {
                     Nil)
                   );
             rels <- ref.outgoingTypedRelationships(Seq("TEST"))
-            } yield (ref, rel, rels)) promised
+            } yield (ref, rel, rels)
           ) match {
 
             case OK(((ref: Node), (r: Relation), (rs: Seq[Relation]))) => rs match {

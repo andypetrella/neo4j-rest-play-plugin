@@ -7,6 +7,7 @@ import play.api.test.Helpers._
 import Neo4JTestHelpers._
 import scalaz.{Success => OK, Failure => KO, _}
 import scalaz.Scalaz._
+import ValidationPromised._ 
 
 /**
  *
@@ -20,7 +21,7 @@ object RootTest extends Specification {
   def is = "Test service root" ^ {
 
     "Get it" ! neoApp {
-      await (endPoint.root.promised) must be like {
+      await (endPoint.root) must be like {
         case OK(r) => r.neo4jVersion must be_=== (plugin.neo4jVersion)
       }
     }
