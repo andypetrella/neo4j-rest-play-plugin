@@ -387,6 +387,18 @@ object Neo4JElement {
 
   type Aoutch = Either[NonEmptyList[String], Failure]
 
+  implicit def aoutchMonoid:Monoid[Aoutch] = new Monoid[Aoutch] {
+    def append(s1: Aoutch, s2: => Aoutch): Aoutch = (s1, s2) match {
+      case (Left(l), Left(r)) => (l |+| r).left[Failure]
+      case (Left(l), Right(r)) => (l |+| NonEmptyList(r.message)).left[Failure]
+      case (Right(l), Left(r)) => (NonEmptyList(l.message) |+| r).left[Failure]
+      case (Right(l), Right(r)) => (NonEmptyList(l.message) |+| NonEmptyList(r.message)).left[Failure]
+    }
+
+    val zero: Aoutch = NonEmptyList("Used Monoid zero to create Aoutch").left[Failure]
+  }
+
+
   implicit def jsToString(js: JsValue): String = js match {
     case o: JsObject => o.value.toString()
     case o: JsArray => o.value.view.map(jsToString(_)).mkString(",")

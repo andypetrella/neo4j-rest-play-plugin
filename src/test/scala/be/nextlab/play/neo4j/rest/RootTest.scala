@@ -8,6 +8,7 @@ import Neo4JTestHelpers._
 import scalaz.{Success => OK, Failure => KO, _}
 import scalaz.Scalaz._
 import ValidationPromised._ 
+import Neo4JElement._ 
 
 /**
  *
@@ -24,8 +25,15 @@ object RootTest extends Specification {
       await (endPoint.root) must be like {
         case OK(r) => r.neo4jVersion must be_=== (plugin.neo4jVersion)
       }
-    }
+    } ^ 
+    "Dummy test for >>*<< " ! {
+        val r1r2 = endPoint.root.map(x => Seq(x)).await.get >>*<< endPoint.root.map(x => Seq(x)).await.get
 
+        r1r2.toOption.get must be like {
+            case Seq(r1, r2) => ok("good")
+            case _ => ko("not good")
+        }
+    }
   }
 
 }

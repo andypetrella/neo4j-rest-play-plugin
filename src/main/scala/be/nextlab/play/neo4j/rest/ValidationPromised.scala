@@ -31,6 +31,11 @@ case class ValidationPromised[E, A](promised: Promise[Validation[E, A]]) {
 
     def flatMap[B](f: A => ValidationPromised[E, B]): ValidationPromised[E, B] = /~~>(f)
 
+    def foldDone[B](
+        f: E => B,
+        s: A => B
+    ) = promised.map(_.fold(f, s))
+
 }
 
 object ValidationPromised {
