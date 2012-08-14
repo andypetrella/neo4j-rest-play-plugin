@@ -22,12 +22,12 @@ object MinimalBuild extends Build {
   }
 
   val libDependencies = Seq(
-    "play" %% "play" % "2.0",
+    "play" %% "play" % "2.0.3",
 
     scalaz,
 
     specs2,
-    "play" %% "play-test" % "2.0" % "test"
+    "play" %% "play-test" % "2.0.3" % "test"
   )
 
 
