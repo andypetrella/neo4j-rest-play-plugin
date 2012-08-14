@@ -112,6 +112,10 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
           case jo: JsObject => KO(Failure(jo, 404, "Unique Node not Found").right[NonEmptyList[String]])
           case x => KO(NonEmptyList("Get Unique Node (errored) must return a JsObject and not " + x).left[Failure])
         }
+        case 500 => resp.json match {
+          case jo: JsObject => KO(Failure(jo, 500, "Unique Node Crashed").right[NonEmptyList[String]])
+          case x => KO(NonEmptyList("Get Unique Node (errored) must return a JsObject and not " + x).left[Failure])
+        }
       }
     } transformer
 
@@ -127,6 +131,10 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
             case _ => KO(Left(NonEmptyList("Get Node must return a JsObject")))
           }
           case x if x == 400 => resp.json match {
+            case j: JsObject => KO(Failure(j, x, "Fail to execute cypher").right[NonEmptyList[String]])
+            case _ => KO(NonEmptyList("Not recognized failure").left[Failure])
+          }
+          case x if x == 500 => resp.json match {
             case j: JsObject => KO(Failure(j, x, "Fail to execute cypher").right[NonEmptyList[String]])
             case _ => KO(NonEmptyList("Not recognized failure").left[Failure])
           }

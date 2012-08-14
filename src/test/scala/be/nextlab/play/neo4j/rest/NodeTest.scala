@@ -108,10 +108,10 @@ object NodeTest extends Specification {
       "Create a Node" ! neoApp {
         val root = endPoint.root
 
-        val key: String = rnds
+        val key:   String   = rnds
         val value: JsString = JsString(rnds)
-        val index: Index = uniqueNodeIndex(key)
-        val node: Node = Node(Seq(index), key -> value)
+        val index: Index    = uniqueNodeIndex(key)
+        val node:  Node     = Node(Seq(index), key -> value)
 
         await(for {
             r <- root;
