@@ -74,13 +74,8 @@ object RelationTest extends Specification {
               case xs => xs must contain(r)
             }
             case _ => ko("bad match")
-
           }
-
         }
-
     }
-
   }
-
 }

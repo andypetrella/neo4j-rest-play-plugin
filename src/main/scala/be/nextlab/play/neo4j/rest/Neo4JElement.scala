@@ -1,6 +1,7 @@
 package be.nextlab.play.neo4j.rest
 
 import scalaz.Monoid
+import play.api.Logger
 import play.api.libs.json.Json._
 import play.api.libs.concurrent.Promise
 import play.api.libs.ws.WS.WSRequestHolder
@@ -10,7 +11,7 @@ import be.nextlab.play.neo4j.rest.Neo4JEndPoint._
 import scala.Predef._
 import java.lang.IllegalStateException
 import play.api.libs.json._
-import scalaz.{Failure => KO, Success => OK, _}
+import scalaz.{Failure => KO, Success => OK, Logger =>ZLogger, _}
 import scalaz.Scalaz._
 import ValidationPromised._
 
@@ -63,10 +64,13 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
             case jo: JsObject => OK(Node(jo))
             case _ => KO(Left(NonEmptyList("Get Node must return a JsObject")))
           }
-          case 404 => resp.json match {
+          case 404 => {
+            Logger.error("Error 404 for getNode")
+            Logger.debug("Response Body:\n" + resp.body)
+            resp.json match {
             case jo: JsObject => KO(Failure(jo, 404, "Node not Found").right[NonEmptyList[String]])
             case _ => KO(NonEmptyList("Get Node (404) must return a JsObject").left[Failure])
-          }
+          }}
         }
     } transformer
 
@@ -82,6 +86,11 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
             case 201 => resp.json match {
               case jo: JsObject => OK(Node(jo, n map { _.indexes } getOrElse (Nil)))
               case _ => KO(NonEmptyList("Create Node must return a JsObject").left[Failure])
+            }
+            case x => {
+              Logger.error("Error "+x+" for createNode")
+              Logger.debug("Response Body:\n" + resp.body)
+              KO(NonEmptyList("Cannot create Node, error code " + x).left[Failure])
             }
           }
         }) transformer;
@@ -108,13 +117,24 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
           }
           case x => KO(Left(NonEmptyList("Get Unique Node must return a JsObject or a singleton array and not " + x)))
         }
-        case 404 => resp.json match {
-          case jo: JsObject => KO(Failure(jo, 404, "Unique Node not Found").right[NonEmptyList[String]])
-          case x => KO(NonEmptyList("Get Unique Node (errored) must return a JsObject and not " + x).left[Failure])
-        }
-        case 500 => resp.json match {
-          case jo: JsObject => KO(Failure(jo, 500, "Unique Node Crashed").right[NonEmptyList[String]])
-          case x => KO(NonEmptyList("Get Unique Node (errored) must return a JsObject and not " + x).left[Failure])
+        case 404 => {
+          Logger.error("Error 404 for getUniqueNode")
+          Logger.debug("Response Body:\n" + resp.body)
+          resp.json match {
+            case jo: JsObject => KO(Failure(jo, 404, "Unique Node not Found").right[NonEmptyList[String]])
+            case x => KO(NonEmptyList("Get Unique Node (errored) must return a JsObject and not " + x).left[Failure])
+          }}
+        case 500 => {
+          Logger.error("Error 500 for getUniqueNode")
+          Logger.debug("Response Body:\n" + resp.body)
+          resp.json match {
+            case jo: JsObject => KO(Failure(jo, 500, "Unique Node Crashed").right[NonEmptyList[String]])
+            case x => KO(NonEmptyList("Get Unique Node (errored) must return a JsObject and not " + x).left[Failure])
+          }}
+        case x => {
+          Logger.error("Error "+x+" for getUniqueNode")
+          Logger.debug("Response Body:\n" + resp.body)
+          KO(NonEmptyList("Get Unique Node, error code " + x).left[Failure])
         }
       }
     } transformer
@@ -240,9 +260,9 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement {
 
 
   def deleteFromIndexes(implicit neo: NEP): ValidationPromised[Aoutch, E] = 
-    indexes.foldLeft(ValidationPromised(Promise.pure(OK(this))):ValidationPromised[Aoutch, E]) {
-      (pr, idx) => pr /~~> { x => x.deleteFromIndex(idx) }
-    }
+      indexes.foldLeft(ValidationPromised(Promise.pure(OK(this))):ValidationPromised[Aoutch, E]) {
+        (pr, idx) => pr /~~> { x => x.deleteFromIndex(idx) }
+      }
 
   def deleteFromIndex(idx: Index)(implicit neo: NEP): ValidationPromised[Aoutch, E] =
     for {
@@ -271,7 +291,11 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement {
                   case jo: JsObject => KO(Failure(jo, x, "Cannot Delete Entity with relations").right[NonEmptyList[String]])
                   case _ => KO(NonEmptyList("delete Entity must return a JsObject").left[Failure])
                 }
-                case x => KO(NonEmptyList("TODO : delete entity error " + x).left[Failure])
+                case x => {
+                  Logger.error("Error "+x+" for delete")
+                  Logger.debug("Response Body:\n" + resp.body)
+                  KO(NonEmptyList("TODO : delete entity error " + x).left[Failure])
+                }
               }
           } transformer
       } yield v
@@ -286,7 +310,6 @@ case class Node(jsValue: JsObject, indexes: Seq[Index] = Nil) extends Entity[Nod
   lazy val traverse = (jsValue \ "traverse").as[String]
   lazy val pagedTraverse = (jsValue \ "paged_traverse").as[String]
 
-  lazy val allRelationships = (jsValue \ "all_relationships").as[String]
   lazy val allTypedRelationships = (jsValue \ "all_typed_relationships").as[String]
   lazy val incomingRelationships = (jsValue \ "incoming_relationships").as[String]
   lazy val incomingTypedRelationships = (jsValue \ "incoming_typed_relationships").as[String]
@@ -308,8 +331,23 @@ case class Node(jsValue: JsObject, indexes: Seq[Index] = Nil) extends Entity[Nod
       }
     } transformer
 
-  lazy val _outgoingTypedRelationships = (jsValue \ "outgoing_typed_relationships").as[String]
+  lazy val _allRelationships = (jsValue \ "all_relationships").as[String]
+  def allRelationships(implicit neo: NEP):ValidationPromised[Aoutch, Seq[Relation]] =
+    neo.request(Left(_allRelationships)) acceptJson() get() map {
+      resp => resp.status match {
+        case 200 => resp.json match {
+          case o: JsArray => o.value.foldLeft(OK(Seq()):Validation[Aoutch, Seq[Relation]]){
+            (acc, j) => (acc, j) match {
+              case (OK(s), (jo:JsObject)) => OK(Relation(jo) +: s)
+              case x => KO(NonEmptyList("get typed relations must return a JsArray o JsObject only").left[Failure])
+            }
+          }
+          case x => KO(NonEmptyList("get typed relations must return a JsArray").left[Failure])
+        }
+      }
+    } transformer
 
+  lazy val _outgoingTypedRelationships = (jsValue \ "outgoing_typed_relationships").as[String]
   def outgoingTypedRelationships(types: Seq[String])(implicit neo: NEP):ValidationPromised[Aoutch, Seq[Relation]] =
     neo.request(Left(_outgoingTypedRelationships.replace("{-list|&|types}", types.mkString("&")))) acceptJson() get() map {
       resp => resp.status match {

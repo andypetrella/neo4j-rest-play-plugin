@@ -50,5 +50,12 @@ object ValidationPromised {
     implicit def pimpValidationPromised[E,A](p:ValidationPromised[E, A]):Promise[Validation[E, A]] = 
         p.promised
 
+    def pureSuccess[E, A](a:A):ValidationPromised[E, A] = Promise.pure(OK(a).asInstanceOf[Validation[E,A]]).transformer
+
+    def sequence[E,A](vs:Seq[ValidationPromised[E, A]]):ValidationPromised[E, Seq[A]] = 
+        vs.foldLeft(pureSuccess[E,Seq[A]](Seq():Seq[A])) {(acc, v) =>
+            acc.flatMap{(xs:Seq[A]) => v.map {(vr:A) => (v +: xs).asInstanceOf[Seq[A]]}}
+        }
+
 }
 
