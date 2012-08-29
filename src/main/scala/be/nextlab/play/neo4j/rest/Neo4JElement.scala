@@ -1,18 +1,21 @@
 package be.nextlab.play.neo4j.rest
 
-import scalaz.Monoid
 import play.api.Logger
+
+import play.api.libs.json._
 import play.api.libs.json.Json._
+
 import play.api.libs.concurrent.Promise
+
 import play.api.libs.ws.WS.WSRequestHolder
-import collection.Seq
+
 import be.nextlab.play.neo4j.rest.{Neo4JEndPoint => NEP}
 import be.nextlab.play.neo4j.rest.Neo4JEndPoint._
-import scala.Predef._
-import java.lang.IllegalStateException
-import play.api.libs.json._
+
+
 import scalaz.{Failure => KO, Success => OK, Logger =>ZLogger, _}
 import scalaz.Scalaz._
+
 import ValidationPromised._
 
 /**
@@ -56,7 +59,7 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
 
   def getNode(id: Int)(implicit neo: NEP): ValidationPromised[Aoutch, Node] = getNode(_node + "/" + id)
 
-  def getNode(url: String)(implicit neo: NEP): ValidationPromised[Aoutch, Node] = 
+  def getNode(url: String)(implicit neo: NEP): ValidationPromised[Aoutch, Node] =
     neo.request(Left(url)) acceptJson() get() map {
       resp =>
         resp.status match {
@@ -106,37 +109,38 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
   }
 
   def getUniqueNode(key: String, value: JsValue)(indexName: String)(implicit neo: NEP): ValidationPromised[Aoutch, Option[Node]] =
-    neo.request(Left(_nodeIndex + "/" + indexName + "/" + key + "/" + jsToString(value))) get() map {
-      resp => resp.status match {
-        case 200 => resp.json match {
-          case jo: JsObject => OK(Some(Node(jo)))
-          case ja: JsArray => ja.value match {
-            case Nil => OK(None)
-            case (a: JsObject) :: Nil => OK(Some(Node(a)))
-            case x => KO(Left(NonEmptyList("Get UniqueNode must return a JsObject or a singleton array and not " + x)))
+    neo.request(Left(_nodeIndex + "/" + indexName + "/" + key + "/" + jsToString(value))) acceptJson() get() map {
+      resp => {
+        resp.status match {
+          case 200 => resp.encJson("utf-8") match {
+            case jo: JsObject => OK(Some(Node(jo)))
+            case ja: JsArray => ja.value match {
+              case Nil => OK(None)
+              case (a: JsObject) :: Nil => OK(Some(Node(a)))
+              case x => KO(Left(NonEmptyList("Get UniqueNode must return a JsObject or a singleton array and not " + x)))
+            }
+            case x => KO(Left(NonEmptyList("Get Unique Node must return a JsObject or a singleton array and not " + x)))
           }
-          case x => KO(Left(NonEmptyList("Get Unique Node must return a JsObject or a singleton array and not " + x)))
-        }
-        case 404 => {
-          Logger.error("Error 404 for getUniqueNode")
-          Logger.debug("Response Body:\n" + resp.body)
-          resp.json match {
-            case jo: JsObject => KO(Failure(jo, 404, "Unique Node not Found").right[NonEmptyList[String]])
-            case x => KO(NonEmptyList("Get Unique Node (errored) must return a JsObject and not " + x).left[Failure])
-          }}
-        case 500 => {
-          Logger.error("Error 500 for getUniqueNode")
-          Logger.debug("Response Body:\n" + resp.body)
-          resp.json match {
-            case jo: JsObject => KO(Failure(jo, 500, "Unique Node Crashed").right[NonEmptyList[String]])
-            case x => KO(NonEmptyList("Get Unique Node (errored) must return a JsObject and not " + x).left[Failure])
-          }}
-        case x => {
-          Logger.error("Error "+x+" for getUniqueNode")
-          Logger.debug("Response Body:\n" + resp.body)
-          KO(NonEmptyList("Get Unique Node, error code " + x).left[Failure])
-        }
-      }
+          case 404 => {
+            Logger.error("Error 404 for getUniqueNode")
+            Logger.debug("Response Body:\n" + resp.body)
+            resp.json match {
+              case jo: JsObject => KO(Failure(jo, 404, "Unique Node not Found").right[NonEmptyList[String]])
+              case x => KO(NonEmptyList("Get Unique Node (errored) must return a JsObject and not " + x).left[Failure])
+            }}
+          case 500 => {
+            Logger.error("Error 500 for getUniqueNode")
+            Logger.debug("Response Body:\n" + resp.body)
+            resp.json match {
+              case jo: JsObject => KO(Failure(jo, 500, "Unique Node Crashed").right[NonEmptyList[String]])
+              case x => KO(NonEmptyList("Get Unique Node (errored) must return a JsObject and not " + x).left[Failure])
+            }}
+          case x => {
+            Logger.error("Error "+x+" for getUniqueNode")
+            Logger.debug("Response Body:\n" + resp.body)
+            KO(NonEmptyList("Get Unique Node, error code " + x).left[Failure])
+          }
+        }}
     } transformer
 
   //////CYPHER/////
@@ -210,7 +214,7 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement {
     data match {
 
       case Some(d) => for {
-          a <- this.deleteFromIndexes; 
+          a <- this.deleteFromIndexes;
           u <- neo.request(Left(_properties)) acceptJson() put(d) map { resp =>
                   /*indexes have been deleted => now update the properties*/
                   resp.status match {
@@ -234,11 +238,11 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement {
     }
 
 
-  def applyIndexes(implicit neo: NEP): ValidationPromised[Aoutch, E] = 
+  def applyIndexes(implicit neo: NEP): ValidationPromised[Aoutch, E] =
     indexes.foldLeft(ValidationPromised(Promise.pure(OK(this))):ValidationPromised[Aoutch, E]) {
       (pr, idx) => pr /~~> {x => x.applyIndex(idx)}
     }
-    
+
 
   def applyIndex(idx: Index)(implicit neo: NEP): ValidationPromised[Aoutch, E] =
     for {
@@ -247,10 +251,10 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement {
           Left(index(r) + "/" + idx.name + (if (idx.unique) "?unique" else ""))
         ) post (
           JsObject(Seq(
-            "key" -> JsString(idx.key), 
-            "value" -> idx.f(jsValue), 
+            "key" -> JsString(idx.key),
+            "value" -> idx.f(jsValue),
             "uri" -> JsString(self)))
-        ) map { resp => 
+        ) map { resp =>
           resp.status match {
             case x if x == 201 || x == 200 => OK(this) //index value created | updated
             case x => KO(NonEmptyList("Cannot apply index : got status " + x).left[Failure])
@@ -259,7 +263,7 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement {
     } yield v
 
 
-  def deleteFromIndexes(implicit neo: NEP): ValidationPromised[Aoutch, E] = 
+  def deleteFromIndexes(implicit neo: NEP): ValidationPromised[Aoutch, E] =
       indexes.foldLeft(ValidationPromised(Promise.pure(OK(this))):ValidationPromised[Aoutch, E]) {
         (pr, idx) => pr /~~> { x => x.deleteFromIndex(idx) }
       }
@@ -271,7 +275,7 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement {
       // d <- neo.request(Left(index(r) + "/" + idx._1 + "/" + idx._3 + "/" + jsToString(idx._4(jsValue)) + "/" + id)) acceptJson() delete()//too externalize
     v <-neo.request(
           Left(index(r) + "/" + idx.name + "/" + idx.key + "/" + id)
-        ) acceptJson() delete() map { resp => 
+        ) acceptJson() delete() map { resp =>
           resp.status match {
             case 204 => OK(this) //deleted
             case x => KO(NonEmptyList("Cannot delete from index : got status " + x).left[Failure])
@@ -282,7 +286,7 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement {
   def delete(implicit neo: NEP): ValidationPromised[Aoutch, E] =
     for {
       //delete from indexes first
-      d <- deleteFromIndexes 
+      d <- deleteFromIndexes
       v <- neo.request(Left(self)) acceptJson() delete() map {
             resp =>
               resp.status match {

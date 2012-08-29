@@ -1,14 +1,22 @@
 package be.nextlab.play.neo4j.rest
 
-import play.api.libs.json._
 import play.api.Play
+
+import play.api.libs.json._
+
+import play.api.libs.ws.Response
 import play.api.libs.ws.WS
 import play.api.libs.ws.WS._
+
 import play.api.libs.concurrent.Promise
+
 import com.ning.http.client.Realm.AuthScheme
+
 import scalaz.{Failure => KO, Success => OK, _}
 import scalaz.Scalaz._
+
 import be.nextlab.play.neo4j.rest.Neo4JElement._
+
 import ValidationPromised._
 
 
@@ -18,8 +26,8 @@ import ValidationPromised._
 
 case class Neo4JEndPoint(protocol: String, host: String, port: Int, credentials: Option[(String, String)]) {
   import Neo4JEndPoint._
-  
-  private lazy val serviceRootUrl = 
+
+  private lazy val serviceRootUrl =
     request(Left(protocol + "://" + host + ":" + port)) acceptJson() get() map {
       resp =>
         resp.status match {
@@ -33,20 +41,20 @@ case class Neo4JEndPoint(protocol: String, host: String, port: Int, credentials:
         }
     } transformer
 
-  private[Neo4JEndPoint] def resolveFrom(from: Either[String, WSRequestHolder]): WSRequestHolder = 
+  private[Neo4JEndPoint] def resolveFrom(from: Either[String, WSRequestHolder]): WSRequestHolder =
     from match {
       case Left(s) => WS.url(s)
       case Right(rh) => rh
     }
 
-  def request(from: Either[String, WSRequestHolder]) = 
+  def request(from: Either[String, WSRequestHolder]) =
     credentials map {
       t: (String, String) => resolveFrom(from).withAuth(t._1, t._2, AuthScheme.BASIC)
     } getOrElse resolveFrom(from)
 
 
   //In order to keep things using Promise, we use pure to create it after having waited for the root
-  lazy val root:ValidationPromised[Aoutch, Root] = 
+  lazy val root:ValidationPromised[Aoutch, Root] =
     Promise.pure((for {
       url <- serviceRootUrl;
       r <- request(Left(url)) acceptJson() get() map {
@@ -66,11 +74,25 @@ case class Neo4JEndPoint(protocol: String, host: String, port: Int, credentials:
 
 case class WSRequestHolderW(w:WSRequestHolder) {
 
-  def acceptJson():WSRequestHolder = w withHeaders ("Accept" -> "application/json")
+  def acceptJson():WSRequestHolder = w withHeaders (
+    "Accept" -> "application/json",
+    "Content-Type"->"application/json; charset=utf-8",
+    "Accept-Charset"->"utf-8",
+    "Content-Encoding"->"utf-8"
+  )
 
+}
+
+case class WSResponseW(w:Response) {
+  import scala.xml._
+
+  def encBody(enc:String) = w.getAHCResponse.getResponseBody(enc)
+  def encJson(enc:String): JsValue = Json.parse(encBody(enc))
+  def encXml(enc:String): Elem = XML.loadString(encBody(enc))
 }
 
 object Neo4JEndPoint {
   implicit def wrapHolder(w:WSRequestHolder):WSRequestHolderW = WSRequestHolderW(w)
+  implicit def wrapResponse(r:Response):WSResponseW = WSResponseW(r)
 }
 
