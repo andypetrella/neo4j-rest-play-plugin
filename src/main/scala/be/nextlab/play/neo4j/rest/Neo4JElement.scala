@@ -63,14 +63,14 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
     neo.request(Left(url)) acceptJson() get() map {
       resp =>
         resp.status match {
-          case 200 => resp.json match {
+          case 200 => resp.encJson match {
             case jo: JsObject => OK(Node(jo))
             case _ => KO(Left(NonEmptyList("Get Node must return a JsObject")))
           }
           case 404 => {
             Logger.error("Error 404 for getNode")
             Logger.debug("Response Body:\n" + resp.body)
-            resp.json match {
+            resp.encJson match {
             case jo: JsObject => KO(Failure(jo, 404, "Node not Found").right[NonEmptyList[String]])
             case _ => KO(NonEmptyList("Get Node (404) must return a JsObject").left[Failure])
           }}
@@ -86,7 +86,7 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
           case Some(node) => holder post (node.data)
         }) map { resp =>
           resp.status match {
-            case 201 => resp.json match {
+            case 201 => resp.encJson match {
               case jo: JsObject => OK(Node(jo, n map { _.indexes } getOrElse (Nil)))
               case _ => KO(NonEmptyList("Create Node must return a JsObject").left[Failure])
             }
@@ -112,7 +112,7 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
     neo.request(Left(_nodeIndex + "/" + indexName + "/" + key + "/" + jsToString(value))) acceptJson() get() map {
       resp => {
         resp.status match {
-          case 200 => resp.encJson("utf-8") match {
+          case 200 => resp.encJson match {
             case jo: JsObject => OK(Some(Node(jo)))
             case ja: JsArray => ja.value match {
               case Nil => OK(None)
@@ -124,14 +124,14 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
           case 404 => {
             Logger.error("Error 404 for getUniqueNode")
             Logger.debug("Response Body:\n" + resp.body)
-            resp.json match {
+            resp.encJson match {
               case jo: JsObject => KO(Failure(jo, 404, "Unique Node not Found").right[NonEmptyList[String]])
               case x => KO(NonEmptyList("Get Unique Node (errored) must return a JsObject and not " + x).left[Failure])
             }}
           case 500 => {
             Logger.error("Error 500 for getUniqueNode")
             Logger.debug("Response Body:\n" + resp.body)
-            resp.json match {
+            resp.encJson match {
               case jo: JsObject => KO(Failure(jo, 500, "Unique Node Crashed").right[NonEmptyList[String]])
               case x => KO(NonEmptyList("Get Unique Node (errored) must return a JsObject and not " + x).left[Failure])
             }}
@@ -150,15 +150,15 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
     neo.request(Left(_cypher)) acceptJson() post (c.toQuery) map {
       resp =>
         resp.status match {
-          case 200 => resp.json match {
+          case 200 => resp.encJson match {
             case j: JsObject => OK(CypherResult(j))
             case _ => KO(Left(NonEmptyList("Get Node must return a JsObject")))
           }
-          case x if x == 400 => resp.json match {
+          case x if x == 400 => resp.encJson match {
             case j: JsObject => KO(Failure(j, x, "Fail to execute cypher").right[NonEmptyList[String]])
             case _ => KO(NonEmptyList("Not recognized failure").left[Failure])
           }
-          case x if x == 500 => resp.json match {
+          case x if x == 500 => resp.encJson match {
             case j: JsObject => KO(Failure(j, x, "Fail to execute cypher").right[NonEmptyList[String]])
             case _ => KO(NonEmptyList("Not recognized failure").left[Failure])
           }
@@ -228,7 +228,7 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement {
       case None => neo.request(Left(_properties)) acceptJson() get() map {
         resp =>
           resp.status match {
-            case 200 => resp.json match {
+            case 200 => resp.encJson match {
               case j: JsObject => OK(this.updateData(j.fields: _*))
               case _ => KO(NonEmptyList("Get Properties for Entity must return a JsObject").left[Failure])
             }
@@ -291,7 +291,7 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement {
             resp =>
               resp.status match {
                 case 204 => OK(this)
-                case x if x == 409 => resp.json match {
+                case x if x == 409 => resp.encJson match {
                   case jo: JsObject => KO(Failure(jo, x, "Cannot Delete Entity with relations").right[NonEmptyList[String]])
                   case _ => KO(NonEmptyList("delete Entity must return a JsObject").left[Failure])
                 }
@@ -328,7 +328,7 @@ case class Node(jsValue: JsObject, indexes: Seq[Index] = Nil) extends Entity[Nod
       "data" -> r.data
     ))) map {
       resp => resp.status match {
-        case 201 => resp.json match {
+        case 201 => resp.encJson match {
           case o: JsObject => OK(Relation(o, r.indexes))
           case x => KO(NonEmptyList("create relation must return a JsObject").left[Failure])
         }
@@ -339,7 +339,7 @@ case class Node(jsValue: JsObject, indexes: Seq[Index] = Nil) extends Entity[Nod
   def allRelationships(implicit neo: NEP):ValidationPromised[Aoutch, Seq[Relation]] =
     neo.request(Left(_allRelationships)) acceptJson() get() map {
       resp => resp.status match {
-        case 200 => resp.json match {
+        case 200 => resp.encJson match {
           case o: JsArray => o.value.foldLeft(OK(Seq()):Validation[Aoutch, Seq[Relation]]){
             (acc, j) => (acc, j) match {
               case (OK(s), (jo:JsObject)) => OK(Relation(jo) +: s)
@@ -355,7 +355,7 @@ case class Node(jsValue: JsObject, indexes: Seq[Index] = Nil) extends Entity[Nod
   def outgoingTypedRelationships(types: Seq[String])(implicit neo: NEP):ValidationPromised[Aoutch, Seq[Relation]] =
     neo.request(Left(_outgoingTypedRelationships.replace("{-list|&|types}", types.mkString("&")))) acceptJson() get() map {
       resp => resp.status match {
-        case 200 => resp.json match {
+        case 200 => resp.encJson match {
           case o: JsArray => o.value.foldLeft(OK(Seq()):Validation[Aoutch, Seq[Relation]]){
             (acc, j) => (acc, j) match {
               case (OK(s), (jo:JsObject)) => OK(Relation(jo) +: s)

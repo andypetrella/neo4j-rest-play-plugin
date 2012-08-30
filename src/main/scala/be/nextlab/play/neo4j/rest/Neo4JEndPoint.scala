@@ -86,9 +86,9 @@ case class WSRequestHolderW(w:WSRequestHolder) {
 case class WSResponseW(w:Response) {
   import scala.xml._
 
-  def encBody(enc:String) = w.getAHCResponse.getResponseBody(enc)
-  def encJson(enc:String): JsValue = Json.parse(encBody(enc))
-  def encXml(enc:String): Elem = XML.loadString(encBody(enc))
+  def encBody = w.header("Content-Encoding").map{enc => w.getAHCResponse.getResponseBody(enc)}.getOrElse(w.body)
+  def encJson: JsValue = Json.parse(encBody)
+  def encXml: Elem = XML.loadString(encBody)
 }
 
 object Neo4JEndPoint {
