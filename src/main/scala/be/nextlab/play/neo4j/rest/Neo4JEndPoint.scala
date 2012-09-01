@@ -8,6 +8,9 @@ import play.api.libs.ws.Response
 import play.api.libs.ws.WS
 import play.api.libs.ws.WS._
 
+import scala.concurrent.stm._
+
+
 import play.api.libs.concurrent.Promise
 
 import com.ning.http.client.Realm.AuthScheme
@@ -53,9 +56,12 @@ case class Neo4JEndPoint(protocol: String, host: String, port: Int, credentials:
     } getOrElse resolveFrom(from)
 
 
-  //In order to keep things using Promise, we use pure to create it after having waited for the root
-  lazy val root:ValidationPromised[Aoutch, Root] =
-    Promise.pure((for {
+
+  /**
+   * Method to get the Neo4J root async
+   */
+  private[this] def getRoot =
+    for {
       url <- serviceRootUrl;
       r <- request(Left(url)) acceptJson() get() map {
         resp =>
@@ -69,7 +75,38 @@ case class Neo4JEndPoint(protocol: String, host: String, port: Int, credentials:
             case status => KO(NonEmptyList("The status is not ok " + status).left[Failure])
           }
       } transformer
-    } yield r).promised.await.get).transformer
+    } yield r
+
+  /**
+   * STM ref to a validation promised to the Root. This particular type is kept for further monadic usages
+   */
+  private[this] val r00t:Ref.View[Option[ValidationPromised[Aoutch, Root]]] = Ref(None:Option[ValidationPromised[Aoutch, Root]]).single
+
+  /**
+   * this methods helps in waiting for Neo4J Root request
+   */
+  private[this] def getR00t =
+    try{
+      Some(Promise.pure(getRoot.promised.await.get).transformer)
+    } catch {
+      case x => {
+        x.printStackTrace
+        None
+      }
+    }
+
+  /**
+   * Holds a reference to the Neo4J server root, it will try to fetch it in the cases:
+   *  - it hasn't requested yet
+   *  - it has already failed
+     */
+  lazy val root:ValidationPromised[Aoutch, Root] =
+      r00t()
+        .getOrElse(
+          r00t.transformAndGet(_ => getR00t)
+            .getOrElse(throw new IllegalStateException("Cannot connect to Neo4J"))
+        )
+
 }
 
 case class WSRequestHolderW(w:WSRequestHolder) {
