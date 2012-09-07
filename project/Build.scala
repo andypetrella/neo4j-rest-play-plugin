@@ -30,6 +30,13 @@ object MinimalBuild extends Build {
     "play" %% "play-test" % "2.0.3" % "test"
   )
 
+  private def timestamp(tsFormat:String): String = {
+    import java.{util => ju}
+    val sf = new java.text.SimpleDateFormat(tsFormat)
+    sf.setTimeZone(ju.TimeZone.getTimeZone("UTC"))
+    sf.format(new ju.Date())
+  }
+
 
   val cloudbeesCredentials = Credentials(file("project/cloudbees.credentials"))
   lazy val root = {
@@ -41,7 +48,10 @@ object MinimalBuild extends Build {
       libraryDependencies ++= libDependencies,
       publishMavenStyle := true,
       publishTo := Some(cloudbeesRepo),
-      credentials += cloudbeesCredentials
+      credentials += cloudbeesCredentials,
+      version <<= (version) { v =>
+          v + "-" + timestamp("yyyyMMdd")
+      }
     )
   }
 }
