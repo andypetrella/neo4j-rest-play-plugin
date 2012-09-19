@@ -26,7 +26,6 @@ import ValidationPromised._
 /**
  * User: andy
  */
-
 case class Neo4JEndPoint(protocol: String, host: String, port: Int, credentials: Option[(String, String)]) {
   import Neo4JEndPoint._
 
