@@ -36,10 +36,10 @@ case class Neo4JEndPoint(protocol: String, host: String, port: Int, credentials:
           case 200 => {
             resp.json match {
               case jo: JsObject => OK((jo \ "data").as[String])
-              case r => KO(NonEmptyList("The base request must return a JsObject containing data and manage").left[Failure])
+              case r => KO(NonEmptyList[Exception](new IllegalArgumentException("The base request must return a JsObject containing data and manage")))
             }
           }
-          case status => KO(NonEmptyList("The status is not ok " + status).left[Failure])
+          case status => KO(NonEmptyList(new IllegalStateException("The status is not ok " + status)))
         }
     } transformer
 
@@ -68,10 +68,10 @@ case class Neo4JEndPoint(protocol: String, host: String, port: Int, credentials:
             case 200 => {
               resp.json match {
                 case jo: JsObject => OK(Root(jo))
-                case x => KO(NonEmptyList("Unexpected response while getting the root url : " + x).left[Failure])
+                case x => KO(NonEmptyList[Exception](new IllegalArgumentException("Unexpected response while getting the root url : " + x)))
               }
             }
-            case status => KO(NonEmptyList("The status is not ok " + status).left[Failure])
+            case status => KO(NonEmptyList[Exception](new IllegalStateException("The status is not ok " + status)))
           }
       } transformer
     } yield r

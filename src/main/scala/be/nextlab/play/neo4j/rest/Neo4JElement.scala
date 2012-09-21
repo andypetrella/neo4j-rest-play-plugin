@@ -21,7 +21,7 @@ import ValidationPromised._
 /**
  * User: andy
  */
-sealed abstract class Neo4JElement {
+sealed abstract trait Neo4JElement {
   type Js <: JsValue
 
   val jsValue: Js
@@ -65,14 +65,14 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
         resp.status match {
           case 200 => resp.encJson match {
             case jo: JsObject => OK(Node(jo))
-            case _ => KO(Left(NonEmptyList("Get Node must return a JsObject")))
+            case _ => KO(NonEmptyList[Exception](new IllegalArgumentException("Get Node must return a JsObject")))
           }
           case 404 => {
             Logger.error("Error 404 for getNode")
             Logger.debug("Response Body:\n" + resp.body)
             resp.encJson match {
-            case jo: JsObject => KO(Failure(jo, 404, "Node not Found").right[NonEmptyList[String]])
-            case _ => KO(NonEmptyList("Get Node (404) must return a JsObject").left[Failure])
+            case jo: JsObject => KO(NonEmptyList[Exception](Failure(jo, 404, "Node not Found")))
+            case _ => KO(NonEmptyList[Exception](new IllegalStateException("Get Node (404) must return a JsObject")))
           }}
         }
     } transformer
@@ -88,12 +88,12 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
           resp.status match {
             case 201 => resp.encJson match {
               case jo: JsObject => OK(Node(jo, n map { _.indexes } getOrElse (Nil)))
-              case _ => KO(NonEmptyList("Create Node must return a JsObject").left[Failure])
+              case _ => KO(NonEmptyList[Exception](new IllegalArgumentException("Create Node must return a JsObject")))
             }
             case x => {
               Logger.error("Error "+x+" for createNode")
               Logger.debug("Response Body:\n" + resp.body)
-              KO(NonEmptyList("Cannot create Node, error code " + x).left[Failure])
+              KO(NonEmptyList[Exception](new IllegalStateException("Cannot create Node, error code " + x)))
             }
           }
         }) transformer;
@@ -108,6 +108,43 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
     } yield n
   }
 
+
+  def byUniqueIndex[E<:Entity[E]](index:Index)(implicit neo:NEP, builder:EntityBuilder[E]):JsValue => ValidationPromised[Aoutch, Option[E]] =
+    jsValue =>
+      neo.request(Left(_nodeIndex + "/" + index.name + "/" + index.key + "/" + jsToString(jsValue))) acceptJson() get() map {
+        resp => {
+          resp.status match {
+            case 200 => resp.encJson match {
+              case jo: JsObject => OK(Some(builder(jo, Seq())))
+              case ja: JsArray => ja.value match {
+                case Nil => OK(None)
+                case (a: JsObject) :: Nil => OK(Some(builder(a, Seq())))
+                case x => KO(NonEmptyList(new IllegalArgumentException("Get Unique Entity must return a JsObject or a singleton array and not " + x)))
+              }
+              case x => KO(NonEmptyList(new IllegalStateException("Get Unique Entity must return a JsObject or a singleton array and not " + x)))
+            }
+            case 404 => {
+              Logger.error("Error 404 for getUniqueEntity")
+              Logger.debug("Response Body:\n" + resp.body)
+              resp.encJson match {
+                case jo: JsObject => KO(NonEmptyList(Failure(jo, 404, "Unique Entity not Found")))
+                case x => KO(NonEmptyList(new IllegalStateException("Get Unique Entity (errored) must return a JsObject and not " + x)))
+              }}
+            case 500 => {
+              Logger.error("Error 500 for getUniqueEntity")
+              Logger.debug("Response Body:\n" + resp.body)
+              resp.encJson match {
+                case jo: JsObject => KO(NonEmptyList(Failure(jo, 500, "Unique Entity Crashed")))
+                case x => KO(NonEmptyList(new IllegalStateException("Get Unique Entity (errored) must return a JsObject and not " + x)))
+              }}
+            case x => {
+              Logger.error("Error "+x+" for getUniqueEntity")
+              Logger.debug("Response Body:\n" + resp.body)
+              KO(NonEmptyList(new IllegalStateException("Get Unique Entity, error code " + x)))
+            }
+          }}
+      } transformer
+
   def getUniqueNode(key: String, value: JsValue)(indexName: String)(implicit neo: NEP): ValidationPromised[Aoutch, Option[Node]] =
     neo.request(Left(_nodeIndex + "/" + indexName + "/" + key + "/" + jsToString(value))) acceptJson() get() map {
       resp => {
@@ -117,28 +154,28 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
             case ja: JsArray => ja.value match {
               case Nil => OK(None)
               case (a: JsObject) :: Nil => OK(Some(Node(a)))
-              case x => KO(Left(NonEmptyList("Get UniqueNode must return a JsObject or a singleton array and not " + x)))
+              case x => KO(NonEmptyList(new IllegalArgumentException("Get UniqueNode must return a JsObject or a singleton array and not " + x)))
             }
-            case x => KO(Left(NonEmptyList("Get Unique Node must return a JsObject or a singleton array and not " + x)))
+            case x => KO(NonEmptyList(new IllegalStateException("Get Unique Node must return a JsObject or a singleton array and not " + x)))
           }
           case 404 => {
             Logger.error("Error 404 for getUniqueNode")
             Logger.debug("Response Body:\n" + resp.body)
             resp.encJson match {
-              case jo: JsObject => KO(Failure(jo, 404, "Unique Node not Found").right[NonEmptyList[String]])
-              case x => KO(NonEmptyList("Get Unique Node (errored) must return a JsObject and not " + x).left[Failure])
+              case jo: JsObject => KO(NonEmptyList(Failure(jo, 404, "Unique Node not Found")))
+              case x => KO(NonEmptyList(new IllegalArgumentException("Get Unique Node (errored) must return a JsObject and not " + x)))
             }}
           case 500 => {
             Logger.error("Error 500 for getUniqueNode")
             Logger.debug("Response Body:\n" + resp.body)
             resp.encJson match {
-              case jo: JsObject => KO(Failure(jo, 500, "Unique Node Crashed").right[NonEmptyList[String]])
-              case x => KO(NonEmptyList("Get Unique Node (errored) must return a JsObject and not " + x).left[Failure])
+              case jo: JsObject => KO(NonEmptyList(Failure(jo, 500, "Unique Node Crashed")))
+              case x => KO(NonEmptyList(new IllegalArgumentException("Get Unique Node (errored) must return a JsObject and not " + x)))
             }}
           case x => {
             Logger.error("Error "+x+" for getUniqueNode")
             Logger.debug("Response Body:\n" + resp.body)
-            KO(NonEmptyList("Get Unique Node, error code " + x).left[Failure])
+            KO(NonEmptyList(new IllegalStateException("Get Unique Node, error code " + x)))
           }
         }}
     } transformer
@@ -152,15 +189,15 @@ case class Root(jsValue: JsObject) extends Neo4JElement {
         resp.status match {
           case 200 => resp.encJson match {
             case j: JsObject => OK(CypherResult(j))
-            case _ => KO(Left(NonEmptyList("Get Node must return a JsObject")))
+            case _ => KO(NonEmptyList(new IllegalArgumentException("Get Node must return a JsObject")))
           }
           case x if x == 400 => resp.encJson match {
-            case j: JsObject => KO(Failure(j, x, "Fail to execute cypher").right[NonEmptyList[String]])
-            case _ => KO(NonEmptyList("Not recognized failure").left[Failure])
+            case j: JsObject => KO(NonEmptyList(Failure(j, x, "Fail to execute cypher")))
+            case _ => KO(NonEmptyList(new IllegalArgumentException("Not recognized failure")))
           }
           case x if x == 500 => resp.encJson match {
-            case j: JsObject => KO(Failure(j, x, "Fail to execute cypher").right[NonEmptyList[String]])
-            case _ => KO(NonEmptyList("Not recognized failure").left[Failure])
+            case j: JsObject => KO(NonEmptyList(Failure(j, x, "Fail to execute cypher")))
+            case _ => KO(NonEmptyList(new IllegalArgumentException("Not recognized failure")))
           }
         }
     } transformer
@@ -192,8 +229,6 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement {
 
   def indexes: Seq[Index]
 
-  def build(j: JsObject, idxs: Seq[Index]): E
-
   def index(r: Root): String
 
   //url to it self
@@ -207,10 +242,10 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement {
 
   lazy val extensions = (jsValue \ "extensions").as[JsObject]
 
-  def updateData(data: (String, JsValue)*) =
-    build(JsObject(("data" -> JsObject(data.toSeq)) +: this.jsValue.fields.filterNot(_._1 == "data")), this.indexes)
+  def updateData(data: (String, JsValue)*)(implicit builder:EntityBuilder[E]) =
+    builder(JsObject(("data" -> JsObject(data.toSeq)) +: this.jsValue.fields.filterNot(_._1 == "data")), this.indexes)
 
-  def properties(data: Option[JsObject])(implicit neo: NEP): ValidationPromised[Aoutch, E] =
+  def properties(data: Option[JsObject])(implicit neo: NEP, builder:EntityBuilder[E]): ValidationPromised[Aoutch, E] =
     data match {
 
       case Some(d) => for {
@@ -219,7 +254,7 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement {
                   /*indexes have been deleted => now update the properties*/
                   resp.status match {
                     case 204 => OK(this.updateData(d.fields: _*))
-                    case x => KO(NonEmptyList("TODO : update props error " + x + "(" + d + ")").left[Failure])
+                    case x => KO(NonEmptyList[Exception](new IllegalStateException("TODO : update props error " + x + "(" + d + ")")))
                   }
               } transformer;
           b <- u.applyIndexes //apply indexes after update
@@ -230,9 +265,9 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement {
           resp.status match {
             case 200 => resp.encJson match {
               case j: JsObject => OK(this.updateData(j.fields: _*))
-              case _ => KO(NonEmptyList("Get Properties for Entity must return a JsObject").left[Failure])
+              case _ => KO(NonEmptyList[Exception](new IllegalArgumentException("Get Properties for Entity must return a JsObject")))
             }
-            case x => KO(NonEmptyList("TODO : get props error " + x).left[Failure])
+            case x => KO(NonEmptyList[Exception](new IllegalStateException("TODO : get props error " + x)))
           }
       } transformer
     }
@@ -257,7 +292,7 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement {
         ) map { resp =>
           resp.status match {
             case x if x == 201 || x == 200 => OK(this) //index value created | updated
-            case x => KO(NonEmptyList("Cannot apply index : got status " + x).left[Failure])
+            case x => KO(NonEmptyList[Exception](new IllegalStateException("Cannot apply index : got status " + x)))
           }
         } transformer
     } yield v
@@ -278,7 +313,7 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement {
         ) acceptJson() delete() map { resp =>
           resp.status match {
             case 204 => OK(this) //deleted
-            case x => KO(NonEmptyList("Cannot delete from index : got status " + x).left[Failure])
+            case x => KO(NonEmptyList[Exception](new IllegalStateException("Cannot delete from index : got status " + x)))
           }
         } transformer
     } yield v
@@ -292,18 +327,22 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement {
               resp.status match {
                 case 204 => OK(this)
                 case x if x == 409 => resp.encJson match {
-                  case jo: JsObject => KO(Failure(jo, x, "Cannot Delete Entity with relations").right[NonEmptyList[String]])
-                  case _ => KO(NonEmptyList("delete Entity must return a JsObject").left[Failure])
+                  case jo: JsObject => KO(NonEmptyList(Failure(jo, x, "Cannot Delete Entity with relations")))
+                  case _ => KO(NonEmptyList(new IllegalStateException("delete Entity must return a JsObject")))
                 }
                 case x => {
                   Logger.error("Error "+x+" for delete")
                   Logger.debug("Response Body:\n" + resp.body)
-                  KO(NonEmptyList("TODO : delete entity error " + x).left[Failure])
+                  KO(NonEmptyList(new IllegalStateException("TODO : delete entity error " + x)))
                 }
               }
           } transformer
       } yield v
 
+}
+
+trait EntityBuilder[E <: Entity[E]] {
+  def apply(jsValue:E#Js, indexes:Seq[Index]):E
 }
 
 case class Node(jsValue: JsObject, indexes: Seq[Index] = Nil) extends Entity[Node] {
@@ -330,7 +369,7 @@ case class Node(jsValue: JsObject, indexes: Seq[Index] = Nil) extends Entity[Nod
       resp => resp.status match {
         case 201 => resp.encJson match {
           case o: JsObject => OK(Relation(o, r.indexes))
-          case x => KO(NonEmptyList("create relation must return a JsObject").left[Failure])
+          case x => KO(NonEmptyList[Exception](new IllegalStateException("create relation must return a JsObject")))
         }
       }
     } transformer
@@ -343,10 +382,10 @@ case class Node(jsValue: JsObject, indexes: Seq[Index] = Nil) extends Entity[Nod
           case o: JsArray => o.value.foldLeft(OK(Seq()):Validation[Aoutch, Seq[Relation]]){
             (acc, j) => (acc, j) match {
               case (OK(s), (jo:JsObject)) => OK(Relation(jo) +: s)
-              case x => KO(NonEmptyList("get typed relations must return a JsArray o JsObject only").left[Failure])
+              case x => KO(NonEmptyList(new IllegalArgumentException("get typed relations must return a JsArray o JsObject only")))
             }
           }
-          case x => KO(NonEmptyList("get typed relations must return a JsArray").left[Failure])
+          case x => KO(NonEmptyList(new IllegalStateException("get typed relations must return a JsArray")))
         }
       }
     } transformer
@@ -359,10 +398,10 @@ case class Node(jsValue: JsObject, indexes: Seq[Index] = Nil) extends Entity[Nod
           case o: JsArray => o.value.foldLeft(OK(Seq()):Validation[Aoutch, Seq[Relation]]){
             (acc, j) => (acc, j) match {
               case (OK(s), (jo:JsObject)) => OK(Relation(jo) +: s)
-              case x => KO(NonEmptyList("get typed relations must return a JsArray o JsObject only").left[Failure])
+              case x => KO(NonEmptyList(new IllegalArgumentException("get typed relations must return a JsArray o JsObject only")))
             }
           }
-          case x => KO(NonEmptyList("get typed relations must return a JsArray").left[Failure])
+          case x => KO(NonEmptyList(new IllegalStateException("get typed relations must return a JsArray")))
         }
       }
     } transformer
@@ -370,9 +409,40 @@ case class Node(jsValue: JsObject, indexes: Seq[Index] = Nil) extends Entity[Nod
 
   def ++(other: Node)(implicit m: Monoid[Node]) = m append(this, other)
 
-  def build(j: JsObject, idxs: Seq[Index]) = Node(j, idxs)
-
   def index(r: Root) = r._nodeIndex
+
+}
+
+object Node {
+
+  import Neo4JElement._
+
+  implicit object NodeMonoid extends Monoid[Node] {
+    def append(s1: Node, s2: => Node) = {
+      val newData: JsObject = (s1.data +++ s2.data) match {
+        case o: JsObject => o
+        case x => throw new IllegalStateException("Cannot add two nodes : " + s1 + " and " + s2)
+      }
+      val newFields: Seq[(String, JsValue)] = s1.jsValue.fields.filter(_._1 != "data") ++
+        s2.jsValue.fields.filter(f => f._1 != "data" && s1.jsValue.fields.find(_._1 == f._1).isEmpty)
+
+      val allNewFields: Seq[(String, JsValue)] = ("data", newData) +: newFields
+      Node(JsObject(allNewFields), s1.indexes ++ (s2.indexes diff s1.indexes))
+    }
+
+    val zero = Node(JsObject(Seq("data" -> JsObject(Seq()))))
+  }
+
+  def apply(indexes: Seq[Index], data: (String, JsValue)*): Node =
+    Node(
+      JsObject(fields = Seq("data" -> JsObject(data.toSeq))),
+      indexes = indexes
+    )
+
+  implicit object NodeBuilder extends EntityBuilder[Node] {
+    def apply(jsValue:JsObject, indexes:Seq[Index]):Node = Node(jsValue, indexes)
+  }
+
 
 }
 
@@ -395,9 +465,43 @@ case class Relation(jsValue: JsObject, indexes: Seq[Index] = Nil) extends Entity
 
   def ++(other: Relation)(implicit m: Monoid[Relation]) = m append(this, other)
 
-  def build(j: JsObject, idxs: Seq[Index]) = Relation(j, idxs)
-
   def index(r: Root) = r._relationshipIndex
+
+}
+
+object Relation {
+  import Neo4JElement._
+
+  implicit object RelationMonoid extends Monoid[Relation] {
+    def append(s1: Relation, s2: => Relation) = {
+      val newData: JsObject = (s1.data +++ s2.data) match {
+        case o: JsObject => o
+        case x => throw new IllegalStateException("Cannot add two relations : " + s1 + " and " + s2)
+      }
+      val newFields: Seq[(String, JsValue)] = s1.jsValue.fields.filter(_._1 != "data") ++
+        s2.jsValue.fields.filter(f => f._1 != "data" && s1.jsValue.fields.find(_._1 == f._1).isEmpty)
+      val allNewFields: Seq[(String, JsValue)] = ("data", newData) +: newFields
+      Relation(JsObject(allNewFields), s1.indexes ++ (s2.indexes diff s1.indexes))
+    }
+
+    val zero = Relation(JsObject(Seq("data" -> JsObject(Seq()))))
+  }
+
+  def apply(start: Either[String, Node], end: Either[String, Node], `type`: String, indexes: Seq[Index], data: (String, JsValue)*): Relation =
+    Relation(
+      jsValue = JsObject(
+        Seq(
+          ("data" -> JsObject(fields = data.toSeq)),
+          ("start" -> JsString(start.fold(s => s, n => n.self))),
+          ("end" -> JsString(end.fold(s => s, n => n.self))),
+          ("type" -> JsString(`type`))
+        )
+      ),
+      indexes = indexes
+    )
+  implicit object RelationBuilder extends EntityBuilder[Relation] {
+    def apply(jsValue:JsObject, indexes:Seq[Index]):Relation = Relation(jsValue, indexes)
+  }
 
 }
 
@@ -417,7 +521,7 @@ case class CypherResult(jsValue: JsObject) extends Neo4JElement {
   def apply(column:String) = transposedResultAsMap(column)
 }
 
-case class Failure(jsValue: JsObject, status: Int, info: String) extends Neo4JElement {
+case class Failure(jsValue: JsObject, status: Int, info: String) extends Exception with Neo4JElement {
   type Js = JsObject
 
 
@@ -425,6 +529,8 @@ case class Failure(jsValue: JsObject, status: Int, info: String) extends Neo4JEl
   lazy val exception = (jsValue \ "exception").as[String]
 
   lazy val stacktrace = (jsValue \ "stacktrace").as[List[String]]
+
+  override def toString(): String = "Fails with status " + status + " and message " + message
 
 }
 
@@ -437,19 +543,7 @@ case class Empty() extends Neo4JElement {
 
 object Neo4JElement {
 
-  type Aoutch = Either[NonEmptyList[String], Failure]
-
-  implicit def aoutchMonoid:Monoid[Aoutch] = new Monoid[Aoutch] {
-    def append(s1: Aoutch, s2: => Aoutch): Aoutch = (s1, s2) match {
-      case (Left(l), Left(r)) => (l |+| r).left[Failure]
-      case (Left(l), Right(r)) => (l |+| NonEmptyList(r.message)).left[Failure]
-      case (Right(l), Left(r)) => (NonEmptyList(l.message) |+| r).left[Failure]
-      case (Right(l), Right(r)) => (NonEmptyList(l.message) |+| NonEmptyList(r.message)).left[Failure]
-    }
-
-    val zero: Aoutch = NonEmptyList("Used Monoid zero to create Aoutch").left[Failure]
-  }
-
+  type Aoutch = NonEmptyList[Exception]
 
   implicit def jsToString(js: JsValue): String = js match {
     case o: JsObject => o.value.toString()
@@ -569,68 +663,5 @@ object Neo4JElement {
   }
 
   implicit def jsValueToAppendable(js: JsValue): JsValueAppendable = JsValueAppendable(js)
-
-}
-
-
-object Node {
-
-  import Neo4JElement._
-
-  implicit object NodeMonoid extends Monoid[Node] {
-    def append(s1: Node, s2: => Node) = {
-      val newData: JsObject = (s1.data +++ s2.data) match {
-        case o: JsObject => o
-        case x => throw new IllegalStateException("Cannot add two nodes : " + s1 + " and " + s2)
-      }
-      val newFields: Seq[(String, JsValue)] = s1.jsValue.fields.filter(_._1 != "data") ++
-        s2.jsValue.fields.filter(f => f._1 != "data" && s1.jsValue.fields.find(_._1 == f._1).isEmpty)
-
-      val allNewFields: Seq[(String, JsValue)] = ("data", newData) +: newFields
-      Node(JsObject(allNewFields), s1.indexes ++ (s2.indexes diff s1.indexes))
-    }
-
-    val zero = Node(JsObject(Seq("data" -> JsObject(Seq()))))
-  }
-
-  def apply(indexes: Seq[Index], data: (String, JsValue)*): Node =
-    Node(
-      JsObject(fields = Seq("data" -> JsObject(data.toSeq))),
-      indexes = indexes
-    )
-
-}
-
-object Relation {
-
-  import Neo4JElement._
-
-  implicit object RelationMonoid extends Monoid[Relation] {
-    def append(s1: Relation, s2: => Relation) = {
-      val newData: JsObject = (s1.data +++ s2.data) match {
-        case o: JsObject => o
-        case x => throw new IllegalStateException("Cannot add two relations : " + s1 + " and " + s2)
-      }
-      val newFields: Seq[(String, JsValue)] = s1.jsValue.fields.filter(_._1 != "data") ++
-        s2.jsValue.fields.filter(f => f._1 != "data" && s1.jsValue.fields.find(_._1 == f._1).isEmpty)
-      val allNewFields: Seq[(String, JsValue)] = ("data", newData) +: newFields
-      Relation(JsObject(allNewFields), s1.indexes ++ (s2.indexes diff s1.indexes))
-    }
-
-    val zero = Relation(JsObject(Seq("data" -> JsObject(Seq()))))
-  }
-
-  def apply(start: Either[String, Node], end: Either[String, Node], `type`: String, indexes: Seq[Index], data: (String, JsValue)*): Relation =
-    Relation(
-      jsValue = JsObject(
-        Seq(
-          ("data" -> JsObject(fields = data.toSeq)),
-          ("start" -> JsString(start.fold(s => s, n => n.self))),
-          ("end" -> JsString(end.fold(s => s, n => n.self))),
-          ("type" -> JsString(`type`))
-        )
-      ),
-      indexes = indexes
-    )
 
 }

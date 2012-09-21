@@ -31,7 +31,7 @@ object NodeTest extends Specification {
   def is = "Use The ROOT" ^ {
     "Use the reference Node " ! neoApp {
       await(for {
-        r <- endPoint.root;  
+        r <- endPoint.root;
         ref <- r.referenceNode
         } yield ref
       ) must be like {
@@ -55,7 +55,7 @@ object NodeTest extends Specification {
       "Create a new Node w/ Properties " ! neoApp {
         val node: Node = Node(Nil, "a" -> JsString("valueForA"))
         await(for {
-            r <- endPoint.root; 
+            r <- endPoint.root;
             n <- r.createNode(Some(node))
           } yield n
         ) must be like {
@@ -96,7 +96,7 @@ object NodeTest extends Specification {
       ) must be like {
         case OK(((c: Node), (n: Node))) => n must be_==(c) and {
           await(root /~~> (_.getNode(n.id))) must be like {
-            case KO(Right(Failure(_, 404, _))) => ok("Get the deleted must return a Failure instance with 404 status")
+            case KO(nel:NonEmptyList[Exception]) if nel.head.isInstanceOf[Failure] && nel.head.asInstanceOf[Failure].status == 404 => ok("Get the deleted must return a Failure instance with 404 status")
             case x => ko("Get the deleted must return a Failure instance, got " + x)
           }
         }
@@ -143,7 +143,7 @@ object NodeTest extends Specification {
           ) must be like {
             case OK(Some(n)) => index.f(n.jsValue) must be_==(newValue)
             case x => ko(" is not ok because we didn't got a Node, but " + x)
-          } 
+          }
         } ^
         "Update a Node and get with old value is None" ! neoApp {
           val root = endPoint.root
