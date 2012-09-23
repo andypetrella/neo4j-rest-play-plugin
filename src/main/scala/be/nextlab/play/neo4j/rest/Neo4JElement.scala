@@ -245,6 +245,18 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement {
   def updateData(data: (String, JsValue)*)(implicit builder:EntityBuilder[E]) =
     builder(JsObject(("data" -> JsObject(data.toSeq)) +: this.jsValue.fields.filterNot(_._1 == "data")), this.indexes)
 
+  /**
+   * PUT http://localhost:7474/db/data/node/7/properties/foo
+   *Accept: application/json
+   *Content-Type: application/json
+   *"bar"
+   *Example response
+   *
+   *204: No Content
+   */
+  def <+(key:String, value:JsValue) =
+    TODO
+
   def properties(data: Option[JsObject])(implicit neo: NEP, builder:EntityBuilder[E]): ValidationPromised[Aoutch, E] =
     data match {
 
@@ -525,12 +537,12 @@ case class Failure(jsValue: JsObject, status: Int, info: String) extends Excepti
   type Js = JsObject
 
 
-  lazy val message = (jsValue \ "message").as[String]
+  lazy val message = (jsValue \ "message").asOpt[String]
   lazy val exception = (jsValue \ "exception").as[String]
 
   lazy val stacktrace = (jsValue \ "stacktrace").as[List[String]]
 
-  override def toString(): String = "Fails with status " + status + " and message " + message
+  override def toString(): String = "Fails with status " + status + " and message " + message.getOrElse("<nothing>")
 
 }
 
