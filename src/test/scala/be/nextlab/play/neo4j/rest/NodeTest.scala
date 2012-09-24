@@ -1,16 +1,20 @@
 package be.nextlab.play.neo4j.rest
 
 import org.specs2.Specification
+
 import play.api.test._
 import play.api.test.Helpers._
+
 import Neo4JTestHelpers._
 import Neo4JElement._
+import Node._
+
 import play.api.libs.json.{JsValue, JsNumber, JsString, JsObject}
 import play.api.libs.concurrent.Promise
-import scala._
-import scala.Predef._
+
 import scalaz.{Success => OK, Failure => KO, _}
 import scalaz.Scalaz._
+
 import be.nextlab.play.neo4j.rest.ValidationPromised._
 
 /**
@@ -138,6 +142,27 @@ object NodeTest extends Specification {
               r <- root;
               n <- r.createNode(Some(node));
               p <- n.properties(Some(JsObject(newProps)));
+              u <- r.getUniqueNode(uniqueKey, newValue)(indexName)
+            } yield u
+          ) must be like {
+            case OK(Some(n)) => index.f(n.jsValue) must be_==(newValue)
+            case x => ko(" is not ok because we didn't got a Node, but " + x)
+          }
+        } ^
+        "Update one Node property" ! neoApp {
+          val root = endPoint.root
+          val key: String = rnds
+          val value: JsString = JsString(rnds)
+          val newValue: JsString = JsString(rnds)
+
+          val props = Seq(key -> value)
+          val index: Index = uniqueNodeIndex(key)
+          val node: Node = Node(Seq(index), props:_*)
+
+          await(for {
+              r <- root;
+              n <- r.createNode(Some(node));
+              p <- n<+(key, Some(newValue));
               u <- r.getUniqueNode(uniqueKey, newValue)(indexName)
             } yield u
           ) must be like {

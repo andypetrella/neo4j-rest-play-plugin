@@ -254,8 +254,23 @@ sealed trait Entity[E <: Entity[E]] extends Neo4JElement {
    *
    *204: No Content
    */
-  def <+(key:String, value:JsValue) =
-    TODO
+  def <+(key:String, value:Option[JsValue])(implicit neo: NEP, builder:EntityBuilder[E]) =
+    value match {
+      case Some(v) =>
+        for {
+          a <- this.deleteFromIndexes; //TODO optimize
+          u <- neo.request(Left(_properties + "/" + key)) acceptJson() put(v) map { resp =>
+                  /*indexes have been deleted => now update the properties*/
+                  resp.status match {
+                    case 204 => OK(this.updateData((key->v)))
+                    case x => KO(NonEmptyList[Exception](new IllegalStateException("TODO : update prop error " + x + "(" + key + "," + v + ")")))
+                  }
+              } transformer;
+          b <- u.applyIndexes //reapply indexes after update
+        } yield b
+
+      //case None =>
+    }
 
   def properties(data: Option[JsObject])(implicit neo: NEP, builder:EntityBuilder[E]): ValidationPromised[Aoutch, E] =
     data match {
