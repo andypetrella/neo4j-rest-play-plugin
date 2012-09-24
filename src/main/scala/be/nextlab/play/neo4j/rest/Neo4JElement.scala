@@ -545,7 +545,8 @@ case class CypherResult(jsValue: JsObject) extends Neo4JElement {
 
   lazy val transposedResultAsMap:Map[String, Seq[JsValue]] = columns zip data.transpose toMap
 
-  def apply(column:String) = transposedResultAsMap(column)
+  def apply(column:String):Seq[JsValue] = transposedResultAsMap(column)
+  def opt(column:String):Option[Seq[JsValue]] = transposedResultAsMap.get(column)
 }
 
 case class Failure(jsValue: JsObject, status: Int, info: String) extends Exception with Neo4JElement {
