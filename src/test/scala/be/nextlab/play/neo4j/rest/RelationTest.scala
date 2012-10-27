@@ -26,7 +26,7 @@ object RelationTest extends Specification {
 
     "Based on Node " ^ {
 
-      "Create outgoing on Reference Node" ! neoApp {
+      "Create outgoing of the Reference Node" ! neoApp {
         await(for {
           r <- endPoint.root;
           ref <- r.referenceNode;
@@ -39,13 +39,13 @@ object RelationTest extends Specification {
                 )
           } yield (ref, rel, newNode)
         ) match {
-          case OK(((ref: Node), (r: Relation), (newNode: Node))) => 
-            (r.self must be_!=("")) and 
-              (r.`type` must be_==("TEST")) and 
+          case OK(((ref: Node), (r: Relation), (newNode: Node))) =>
+            (r.self must be_!=("")) and
+              (r.`type` must be_==("TEST")) and
               (await(r.end) must be like {
                 case OK(n) if n == newNode => ok("got the good end")
                 case _ => ko("unable to retrieve the end node")
-              }) and 
+              }) and
               (await(r.start) must be like {
                 case OK(n) if n == ref => ok("got the good start")
                 case _ => ko("unable to retrieve the start node")
@@ -71,7 +71,7 @@ object RelationTest extends Specification {
 
             case OK(((ref: Node), (r: Relation), (rs: Seq[Relation]))) => rs match {
               case Nil => ko("Must return at least one Relation")
-              case xs => xs must contain(r)
+              case xs => xs must haveOneElementLike {case i:Relation => (i.`type` must be_==("TEST")) and (i.id must be_==(r.id))}
             }
             case _ => ko("bad match")
           }

@@ -17,7 +17,7 @@ class Neo4JRestPlugin(app: Application) extends Plugin {
     u <- app.configuration.getString("neo4j.rest.username");
     p <- app.configuration.getString("neo4j.rest.password")
   ) yield (u,  p)
-    
+
 
   lazy val neo4j = Neo4JEndPoint(protocol, host, port, credentials)
 

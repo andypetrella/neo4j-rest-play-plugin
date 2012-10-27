@@ -13,11 +13,11 @@ object MinimalBuild extends Build {
   val scalazVersionNumber = "6.0.4"
   val scalaz = "org.scalaz" %% "scalaz-core" % scalazVersionNumber withSources
 
-  lazy val neo4j                   = "org.neo4j.app" % "neo4j-server" % "1.8.M07" % "test" classifier "static-web" classifier ""
-  lazy val neo4jkernel             = "org.neo4j" % "neo4j-kernel" % "1.8.M07" % "test"  classifier "tests" classifier ""
+  lazy val neo4j                   = "org.neo4j.app" % "neo4j-server" % "1.9.M01" % "test" classifier "static-web" classifier ""
+  lazy val neo4jkernel             = "org.neo4j" % "neo4j-kernel" % "1.9.M01" % "test"  classifier "tests" classifier ""
   lazy val jerseyForNeo4J          = "com.sun.jersey" % "jersey-core" % "1.9" % "test"
 
-  val specs2 = "org.specs2" %% "specs2" % "1.8.2" % "test" withSources
+  val specs2 = "org.specs2" %% "specs2" % "1.12.2" % "test" withSources
 
   val cloudbees = "https://repository-andy-petrella.forge.cloudbees.com/"
   val cloudbeesRepo = buildVersion match {
