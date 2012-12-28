@@ -2,6 +2,8 @@ package be.nextlab.play.neo4j.rest
 
 import org.specs2.Specification
 
+import play.api.Play.current
+
 import play.api.test._
 import play.api.test.Helpers._
 
@@ -10,12 +12,16 @@ import Neo4JElement._
 import Node._
 
 import play.api.libs.json.{JsValue, JsNumber, JsString, JsObject}
-import play.api.libs.concurrent.Promise
 
 import scalaz.{Success => OK, Failure => KO, _}
 import scalaz.Scalaz._
 
-import be.nextlab.play.neo4j.rest.ValidationPromised._
+import play.api.libs.concurrent.Akka
+import scala.concurrent.Promise
+import scala.concurrent.Future
+
+//Akkaz: implementation of Functor[Future] and Monad[Future]
+import scalaz.akkaz.future._
 
 /**
  *
@@ -25,6 +31,9 @@ import be.nextlab.play.neo4j.rest.ValidationPromised._
  */
 
 object NodeTest extends Specification {
+
+  implicit lazy val executionContext = Akka.system.dispatcher
+
   val indexName: String = "uniqueNodeIndex"
   val uniqueKey: String = "uniqueKey"
   def indexFunction(key:String) : JsObject => JsValue = (js: JsObject) => (js \ "data").as[JsObject] \ key
@@ -32,14 +41,16 @@ object NodeTest extends Specification {
 
   def rnds = BigInt(100, scala.util.Random).toString(36)
 
+  def awaitT[A,B](x:EitherT[Future, A, B]) = await(x.run)
+
   def is = "Use The ROOT" ^ {
     "Use the reference Node " ! neoApp {
-      await(for {
-        r <- endPoint.root;
-        ref <- r.referenceNode
+      awaitT(for {
+          r <- endPoint.root
+          ref <- r.referenceNode
         } yield ref
       ) must be like {
-        case OK(_) => ok(" is ok")
+        case \/-(_) => ok(" is ok")
         case x => ko(" is not ok because we didn't got a Node, but " + x)
       }
     }
@@ -47,23 +58,23 @@ object NodeTest extends Specification {
     end ^
     "Create Nodes " ^ {
     "Create a new Empty Node " ! neoApp {
-      await(for{
-        r <- endPoint.root;
-        n <- r.createNode(None)
+      awaitT(for {
+          r <- endPoint.root
+          n <- r.createNode(None)
         } yield n
       ) must be like {
-        case OK(_) => ok(" is ok")
+        case \/-(_) => ok(" is ok")
         case x => ko(" is not ok because we didn't got a Node, but " + x)
       }
     } ^
       "Create a new Node w/ Properties " ! neoApp {
         val node: Node = Node(Nil, "a" -> JsString("valueForA"))
-        await(for {
+        awaitT(for {
             r <- endPoint.root;
             n <- r.createNode(Some(node))
           } yield n
         ) must be like {
-          case OK(n@(Node(_, _))) => {
+          case \/-(n@(Node(_, _))) => {
             (n.id must be_>=(0)) and (n.self must not beEmpty) and (n.data must be_==(node.data))
           }
           case x => ko(" is not ok because we didn't got a Node, but " + x)
@@ -75,13 +86,13 @@ object NodeTest extends Specification {
       val root = endPoint.root
       val node: Node = Node(Nil, "a" -> JsString("valueForA"))
       val newProps: JsObject = JsObject(Seq("a" -> JsString("newValueForA"), "b" -> JsNumber(1)))
-      await(for {
+      awaitT(for {
           r <- root;
           n <- r.createNode(Some(node));
           u <- n.properties(Some(newProps))
         } yield (n, u)
       ) must be like {
-        case OK(((created:Node), (n: Node))) => {
+        case \/-(((created:Node), (n: Node))) => {
           (n.id must be_==(created.id)) and (n.self must be_==(created.self)) and (n.data must be_==(newProps))
         }
         case x => ko(" is not ok because we didn't got a Node, but " + x)
@@ -92,15 +103,15 @@ object NodeTest extends Specification {
     "Delete a Node " ! neoApp {
       val root = endPoint.root
       val node: Node = Node(Nil, "a" -> JsString("valueForA"))
-      await(for {
+      awaitT(for {
         r <- root;
         c <- r.createNode(Some(node));
         d <- c.delete
         } yield (c, d)
       ) must be like {
-        case OK(((c: Node), (n: Node))) => n must be_==(c) and {
-          await(root /~~> (_.getNode(n.id))) must be like {
-            case KO(nel:NonEmptyList[Exception]) if nel.head.isInstanceOf[Failure] && nel.head.asInstanceOf[Failure].status == 404 => ok("Get the deleted must return a Failure instance with 404 status")
+        case \/-(((c: Node), (n: Node))) => n must be_==(c) and {
+          awaitT(root flatMap (_.getNode(n.id))) must be like {
+            case -\/(nel:NonEmptyList[Exception]) if nel.head.isInstanceOf[Failure] && nel.head.asInstanceOf[Failure].status == 404 => ok("Get the deleted must return a Failure instance with 404 status")
             case x => ko("Get the deleted must return a Failure instance, got " + x)
           }
         }
@@ -117,13 +128,13 @@ object NodeTest extends Specification {
         val index: Index    = uniqueNodeIndex(key)
         val node:  Node     = Node(Seq(index), key -> value)
 
-        await(for {
+        awaitT(for {
             r <- root;
             n <- r.createNode(Some(node));
             u <- r.getUniqueNode(uniqueKey, value)(indexName)
             } yield u
         ) must be like {
-          case OK(Some(n)) => index.f(n.jsValue) must be_==(value)
+          case \/-(Some(n)) => index.f(n.jsValue) must be_==(value)
           case x => ko(" is not ok because we didn't got a Node, but " + x)
         }
       } ^
@@ -138,14 +149,14 @@ object NodeTest extends Specification {
           val index: Index = uniqueNodeIndex(key)
           val node: Node = Node(Seq(index), props:_*)
 
-          await(for {
+          awaitT(for {
               r <- root;
               n <- r.createNode(Some(node));
               p <- n.properties(Some(JsObject(newProps)));
               u <- r.getUniqueNode(uniqueKey, newValue)(indexName)
             } yield u
           ) must be like {
-            case OK(Some(n)) => index.f(n.jsValue) must be_==(newValue)
+            case \/-(Some(n)) => index.f(n.jsValue) must be_==(newValue)
             case x => ko(" is not ok because we didn't got a Node, but " + x)
           }
         } ^
@@ -159,14 +170,14 @@ object NodeTest extends Specification {
           val index: Index = uniqueNodeIndex(key)
           val node: Node = Node(Seq(index), props:_*)
 
-          await(for {
+          awaitT(for {
               r <- root;
               n <- r.createNode(Some(node));
               p <- n<+(key, Some(newValue));
               u <- r.getUniqueNode(uniqueKey, newValue)(indexName)
             } yield u
           ) must be like {
-            case OK(Some(n)) => index.f(n.jsValue) must be_==(newValue)
+            case \/-(Some(n)) => index.f(n.jsValue) must be_==(newValue)
             case x => ko(" is not ok because we didn't got a Node, but " + x)
           }
         } ^
@@ -181,14 +192,14 @@ object NodeTest extends Specification {
           val index: Index = uniqueNodeIndex(key)
           val node: Node = Node(Seq(index), props:_*)
 
-          await(for{
+          awaitT(for{
             r <- root;
             n <-r.createNode(Some(node));
             p <-n.properties(Some(JsObject(newProps)));
             u <- r.getUniqueNode(uniqueKey, value)(indexName)
             } yield u
           ) must be like {
-            case OK(None) => ok("Got nothing")
+            case \/-(None) => ok("Got nothing")
             case x => ko("not ok because we got something " + x)
           }
         } ^
@@ -209,14 +220,14 @@ object NodeTest extends Specification {
             node.indexes
           )
 
-          await(for {
+          awaitT(for {
             r <- root;
             n <- r.createNode(Some(node));
             p <- n.updateData(newProps:_*).properties(Some(JsObject(newProps)));
             u <- r.getUniqueNode(uniqueKey, newValue)(indexName)
             } yield u
           ) must like {
-            case OK(Some(n)) => index.f(n.jsValue) must be_==(newValue)
+            case \/-(Some(n)) => index.f(n.jsValue) must be_==(newValue)
             case x => ko(" is not ok because we didn't got a Node, but " + x)
           }
         } ^
@@ -237,14 +248,14 @@ object NodeTest extends Specification {
             node.indexes
           )
 
-          await(for {
+          awaitT(for {
             r <- root;
             n <- r.createNode(Some(node));
             p <- n.updateData(newProps:_*).properties(Some(JsObject(newProps)));
             u <- r.getUniqueNode(uniqueKey, value)(indexName)
             } yield u
           ) must be like {
-            case OK(None) => ok(" we got nothing")
+            case \/-(None) => ok(" we got nothing")
             case x => ko("is failure because we got something " + x)
           }
         } ^
@@ -256,14 +267,14 @@ object NodeTest extends Specification {
           val index: Index = uniqueNodeIndex(key)
           val node: Node = Node(Seq(index), key -> value)
 
-          await(for {
+          awaitT(for {
             r <- root;
             n <- r.createNode(Some(node));
             d <- n.delete;
             u <- r.getUniqueNode(uniqueKey, value)(indexName)
             } yield u
           ) must be like {
-            case OK(None) => ok("we got nothing")
+            case \/-(None) => ok("we got nothing")
             case x => ko("because we got something " + x)
           }
         }

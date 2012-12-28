@@ -6,10 +6,17 @@ import play.api.test.Helpers._
 import Neo4JTestHelpers._
 import Neo4JElement._
 import play.api.libs.json.{JsValue, JsNumber, JsString, JsObject}
-import play.api.libs.concurrent.Promise
-import ValidationPromised._
 import scalaz.{Success => OK, Failure => KO, _}
 import scalaz.Scalaz._
+
+import play.api.Play.current
+
+import play.api.libs.concurrent.Akka
+import scala.concurrent.Promise
+import scala.concurrent.Future
+
+//Akkaz: implementation of Functor[Future] and Monad[Future]
+import scalaz.akkaz.future._
 
 /**
  *
@@ -19,15 +26,18 @@ import scalaz.Scalaz._
  */
 
 object RelationTest extends Specification {
+  implicit lazy val executionContext = Akka.system.dispatcher
 
   def rnds = BigInt(100, scala.util.Random).toString(36)
+
+  def awaitT[A,B](x:EitherT[Future, A, B]) = await(x.run)
 
   def is = "Deal with relations in Neo4J using the REST api " ^ {
 
     "Based on Node " ^ {
 
       "Create outgoing of the Reference Node" ! neoApp {
-        await(for {
+        awaitT(for {
           r <- endPoint.root;
           ref <- r.referenceNode;
           newNode <- r.createNode(None);
@@ -39,15 +49,15 @@ object RelationTest extends Specification {
                 )
           } yield (ref, rel, newNode)
         ) match {
-          case OK(((ref: Node), (r: Relation), (newNode: Node))) =>
+          case \/-(((ref: Node), (r: Relation), (newNode: Node))) =>
             (r.self must be_!=("")) and
               (r.rtype must be_==("TEST")) and
-              (await(r.end) must be like {
-                case OK(n) if n == newNode => ok("got the good end")
+              (awaitT(r.end) must be like {
+                case \/-(n) if n == newNode => ok("got the good end")
                 case _ => ko("unable to retrieve the end node")
               }) and
-              (await(r.start) must be like {
-                case OK(n) if n == ref => ok("got the good start")
+              (awaitT(r.start) must be like {
+                case \/-(n) if n == ref => ok("got the good start")
                 case _ => ko("unable to retrieve the start node")
               })
           case _ => ko("bad match")
@@ -55,7 +65,7 @@ object RelationTest extends Specification {
         }
       } ^
         "Get outgoing relation of the Reference Node" ! neoApp {
-          await(for {
+          awaitT(for {
             r <- endPoint.root;
             ref <- r.referenceNode;
             newNode <- r.createNode(None);
@@ -69,7 +79,7 @@ object RelationTest extends Specification {
             } yield (ref, rel, rels)
           ) match {
 
-            case OK(((ref: Node), (r: Relation), (rs: Seq[Relation]))) => rs match {
+            case \/-(((ref: Node), (r: Relation), (rs: Seq[Relation]))) => rs match {
               case Nil => ko("Must return at least one Relation")
               case xs => xs must haveOneElementLike {case i:Relation => (i.rtype must be_==("TEST")) and (i.id must be_==(r.id))}
             }

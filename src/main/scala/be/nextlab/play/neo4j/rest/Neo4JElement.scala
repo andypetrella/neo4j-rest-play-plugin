@@ -13,11 +13,10 @@ import be.nextlab.play.neo4j.rest.{Neo4JEndPoint => NEP}
 import be.nextlab.play.neo4j.rest.Neo4JEndPoint._
 
 
-import scalaz.{Failure => KO, Success => OK, Logger =>ZLogger, _}
+import scalaz.{Failure => KO, Success => OK, _}
 import scalaz.Scalaz._
 
-import ValidationPromised._
-
+import scala.concurrent.Future
 /**
  * User: andy
  */
@@ -109,5 +108,9 @@ case class Empty() extends Neo4JElement {
 object Neo4JElement {
 
   type Aoutch = NonEmptyList[Exception]
+
+  implicit def aoutch(e:Exception):Aoutch = NonEmptyList[Exception](e)
+
+  implicit def wrapEitherT[E](f:Future[Aoutch \/ E]):EitherT[Future, Aoutch, E] = EitherT(f)
 
 }

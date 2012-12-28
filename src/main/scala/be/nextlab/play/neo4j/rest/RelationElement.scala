@@ -1,11 +1,13 @@
 package be.nextlab.play.neo4j.rest
 
+import play.api.Play.current
+
 import play.api.Logger
 
 import play.api.libs.json._
 import play.api.libs.json.Json._
 
-import play.api.libs.concurrent.Promise
+import play.api.libs.concurrent.Akka
 
 import play.api.libs.ws.WS.WSRequestHolder
 
@@ -13,17 +15,19 @@ import be.nextlab.play.neo4j.rest.{Neo4JEndPoint => NEP}
 import be.nextlab.play.neo4j.rest.Neo4JEndPoint._
 
 
-import scalaz.{Failure => KO, Success => OK, Logger =>ZLogger, _}
+import scalaz.{Failure => KO, Success => OK, _}
 import scalaz.Scalaz._
 
-import ValidationPromised._
+import scala.concurrent.Promise
+import scala.concurrent.Future
 
+//Akkaz: implementation of Functor[Future] and Monad[Future]
+import scalaz.akkaz.future._
 /**
  * User: andy
  */
 trait RelationElement { this:Relation =>
   import Neo4JElement._
-  import ValidationPromised._
   import RelationElement._
   import JsValueHelper._
 
@@ -32,12 +36,12 @@ trait RelationElement { this:Relation =>
   //START
   lazy val _start = (jsValue \ "start").as[String]
 
-  def start(implicit neo: NEP) = neo.root /~~> { root => root.getNode(_start) }
+  def start(implicit neo: NEP) = neo.root flatMap { root => root.getNode(_start) }
 
   //END
   lazy val _end = (jsValue \ "end").as[String]
 
-  def end(implicit neo: NEP) = neo.root /~~> { _.getNode(_end) }
+  def end(implicit neo: NEP) = neo.root flatMap { _.getNode(_end) }
 
   def ++(other: Relation)(implicit m: Monoid[Relation]) = m append(this, other)
 

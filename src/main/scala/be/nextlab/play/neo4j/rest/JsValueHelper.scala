@@ -13,10 +13,8 @@ import be.nextlab.play.neo4j.rest.{Neo4JEndPoint => NEP}
 import be.nextlab.play.neo4j.rest.Neo4JEndPoint._
 
 
-import scalaz.{Failure => KO, Success => OK, Logger =>ZLogger, _}
+import scalaz.{Failure => KO, Success => OK, _}
 import scalaz.Scalaz._
-
-import ValidationPromised._
 
 /**
  * User: andy

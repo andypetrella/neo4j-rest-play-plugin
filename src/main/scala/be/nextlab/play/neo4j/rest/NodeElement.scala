@@ -1,11 +1,13 @@
 package be.nextlab.play.neo4j.rest
 
+import play.api.Play.current
+
 import play.api.Logger
 
 import play.api.libs.json._
 import play.api.libs.json.Json._
 
-import play.api.libs.concurrent.Promise
+import play.api.libs.concurrent.Akka
 
 import play.api.libs.ws.WS.WSRequestHolder
 
@@ -13,11 +15,14 @@ import be.nextlab.play.neo4j.rest.{Neo4JEndPoint => NEP}
 import be.nextlab.play.neo4j.rest.Neo4JEndPoint._
 
 
-import scalaz.{Failure => KO, Success => OK, Logger =>ZLogger, _}
+import scalaz.{Failure => KO, Success => OK, _}
 import scalaz.Scalaz._
 
-import ValidationPromised._
+import scala.concurrent.Promise
+import scala.concurrent.Future
 
+//Akkaz: implementation of Functor[Future] and Monad[Future]
+import scalaz.akkaz.future._
 /**
  * User: andy
  */
@@ -25,7 +30,6 @@ trait NodeElement {
   this:Node =>
 
   import Neo4JElement._
-  import ValidationPromised._
   import NodeElement._
   import JsValueHelper._
 
@@ -39,7 +43,7 @@ trait NodeElement {
 
   lazy val _createRelationship = (jsValue \ "create_relationship").as[String]
 
-  def createRelationship(r: Relation)(implicit neo: NEP):ValidationPromised[Aoutch, Relation] =
+  def createRelationship(r: Relation)(implicit neo: NEP):EitherT[Future, Aoutch, Relation] =
     neo.request(Left(_createRelationship)) acceptJson() post (JsObject(Seq(
       "to" -> JsString(r._end),
       "type" -> JsString(r.rtype),
@@ -47,43 +51,44 @@ trait NodeElement {
     ))) map {
       resp => resp.status match {
         case 201 => resp.encJson match {
-          case o: JsObject => OK(Relation(o, r.indexes))
-          case x => KO(NonEmptyList[Exception](new IllegalStateException("create relation must return a JsObject")))
+          case o: JsObject => Relation(o, r.indexes).right
+          case x => aoutch(new IllegalStateException("create relation must return a JsObject")).left
         }
       }
-    } transformer
+    }
 
   lazy val _allRelationships = (jsValue \ "all_relationships").as[String]
-  def allRelationships(implicit neo: NEP):ValidationPromised[Aoutch, Seq[Relation]] =
+  def allRelationships(implicit neo: NEP):EitherT[Future, Aoutch, Seq[Relation]] =
     neo.request(Left(_allRelationships)) acceptJson() get() map {
       resp => resp.status match {
         case 200 => resp.encJson match {
-          case o: JsArray => o.value.foldLeft(OK(Seq()):Validation[Aoutch, Seq[Relation]]){
-            (acc, j) => (acc, j) match {
-              case (OK(s), (jo:JsObject)) => OK(Relation(jo) +: s)
-              case x => KO(NonEmptyList(new IllegalArgumentException("get typed relations must return a JsArray o JsObject only")))
+          case o: JsArray =>
+            o.value.foldLeft(Seq().right:Aoutch \/ Seq[Relation]){
+              (acc, j) => (acc, j) match {
+                case (\/-(s), (jo:JsObject)) => (Relation(jo) +: s).right
+                case x => aoutch(new IllegalArgumentException("get typed relations must return a JsArray o JsObject only")).left
+              }
             }
-          }
-          case x => KO(NonEmptyList(new IllegalStateException("get typed relations must return a JsArray")))
+          case x => aoutch(new IllegalStateException("get typed relations must return a JsArray")).left
         }
       }
-    } transformer
+    }
 
   lazy val _outgoingTypedRelationships = (jsValue \ "outgoing_typed_relationships").as[String]
-  def outgoingTypedRelationships(types: Seq[String])(implicit neo: NEP):ValidationPromised[Aoutch, Seq[Relation]] =
+  def outgoingTypedRelationships(types: Seq[String])(implicit neo: NEP):EitherT[Future, Aoutch, Seq[Relation]] =
     neo.request(Left(_outgoingTypedRelationships.replace("{-list|&|types}", types.mkString("&")))) acceptJson() get() map {
       resp => resp.status match {
         case 200 => resp.encJson match {
-          case o: JsArray => o.value.foldLeft(OK(Seq()):Validation[Aoutch, Seq[Relation]]){
+          case o: JsArray => o.value.foldLeft(Seq().right:Aoutch \/ Seq[Relation]){
             (acc, j) => (acc, j) match {
-              case (OK(s), (jo:JsObject)) => OK(Relation(jo) +: s)
-              case x => KO(NonEmptyList(new IllegalArgumentException("get typed relations must return a JsArray o JsObject only")))
+              case (\/-(s), (jo:JsObject)) => (Relation(jo) +: s).right
+              case x => aoutch(new IllegalArgumentException("get typed relations must return a JsArray o JsObject only")).left
             }
           }
-          case x => KO(NonEmptyList(new IllegalStateException("get typed relations must return a JsArray")))
+          case x => aoutch(new IllegalStateException("get typed relations must return a JsArray")).left
         }
       }
-    } transformer
+    }
 
 
   def ++(other: Node)(implicit m: Monoid[Node]) = m append(this, other)

@@ -1,11 +1,14 @@
 package be.nextlab.play.neo4j.rest
 
+import play.api.Play.current
+
 import play.api.Logger
 
 import play.api.libs.json._
 import play.api.libs.json.Json._
 
-import play.api.libs.concurrent.Promise
+import play.api.libs.concurrent.Akka
+//import play.api.libs.concurrent.Promise
 
 import play.api.libs.ws.WS.WSRequestHolder
 
@@ -13,10 +16,14 @@ import be.nextlab.play.neo4j.rest.{Neo4JEndPoint => NEP}
 import be.nextlab.play.neo4j.rest.Neo4JEndPoint._
 
 
-import scalaz.{Failure => KO, Success => OK, Logger =>ZLogger, _}
+import scalaz.{Failure => KO, Success => OK, _}
 import scalaz.Scalaz._
 
-import ValidationPromised._
+import scala.concurrent.Promise
+import scala.concurrent.Future
+
+//Akkaz: implementation of Functor[Future] and Monad[Future]
+import scalaz.akkaz.future._
 
 /**
  * User: andy
@@ -24,7 +31,8 @@ import ValidationPromised._
 trait EntityElement[E <: Entity[E]] {this:E =>
 
   import Neo4JElement._
-  import ValidationPromised._
+
+  implicit val executionContext = Akka.system.dispatcher
 
   type Js = JsObject
 
@@ -60,57 +68,57 @@ trait EntityElement[E <: Entity[E]] {this:E =>
       case Some(v) =>
         for {
           a <- this.deleteFromIndexes; //TODO optimize
-          u <- neo.request(Left(_properties + "/" + key)) acceptJson() put(v) map { resp =>
+          u <- EitherT(neo.request(Left(_properties + "/" + key)) acceptJson() put(v) map { resp =>
                   /*indexes have been deleted => now update the properties*/
                   resp.status match {
-                    case 204 => OK(this.updateData((key->v)))
-                    case x => KO(NonEmptyList[Exception](new IllegalStateException("TODO : update prop error " + x + "(" + key + "," + v + ")")))
+                    case 204 => this.updateData((key->v)).right[Aoutch]
+                    case x => aoutch(new IllegalStateException("TODO : update prop error " + x + "(" + key + "," + v + ")")).left[E]
                   }
-              } transformer;
+              });
           b <- u.applyIndexes //reapply indexes after update
         } yield b
 
       //case None =>
     }
 
-  def properties(data: Option[JsObject])(implicit neo: NEP, builder:EntityBuilder[E]): ValidationPromised[Aoutch, E] =
+  def properties(data: Option[JsObject])(implicit neo: NEP, builder:EntityBuilder[E]): EitherT[Future, Aoutch, E] =
     data match {
 
       case Some(d) => for {
           a <- this.deleteFromIndexes;
-          u <- neo.request(Left(_properties)) acceptJson() put(d) map { resp =>
+          u <- EitherT(neo.request(Left(_properties)) acceptJson() put(d) map { resp =>
                   /*indexes have been deleted => now update the properties*/
                   resp.status match {
-                    case 204 => OK(this.updateData(d.fields: _*))
-                    case x => KO(NonEmptyList[Exception](new IllegalStateException("TODO : update props error " + x + "(" + d + ")")))
+                    case 204 => this.updateData(d.fields: _*).right[Aoutch]
+                    case x => aoutch(new IllegalStateException("TODO : update props error " + x + "(" + d + ")")).left[E]
                   }
-              } transformer;
+              })
           b <- u.applyIndexes //apply indexes after update
         } yield b
 
-      case None => neo.request(Left(_properties)) acceptJson() get() map {
+      case None => EitherT(neo.request(Left(_properties)) acceptJson() get() map {
         resp =>
           resp.status match {
             case 200 => resp.encJson match {
-              case j: JsObject => OK(this.updateData(j.fields: _*))
-              case _ => KO(NonEmptyList[Exception](new IllegalArgumentException("Get Properties for Entity must return a JsObject")))
+              case j: JsObject => this.updateData(j.fields: _*).right[Aoutch]
+              case _ => aoutch(new IllegalArgumentException("Get Properties for Entity must return a JsObject")).left[E]
             }
-            case x => KO(NonEmptyList[Exception](new IllegalStateException("TODO : get props error " + x)))
+            case x => aoutch(new IllegalStateException("TODO : get props error " + x)).left[E]
           }
-      } transformer
+      })
     }
 
 
-  def applyIndexes(implicit neo: NEP): ValidationPromised[Aoutch, E] =
-    indexes.foldLeft(ValidationPromised(Promise.pure(OK(this))):ValidationPromised[Aoutch, E]) {
-      (pr, idx) => pr /~~> {x => x.applyIndex(idx)}
+  def applyIndexes(implicit neo: NEP): EitherT[Future, Aoutch, E] =
+    indexes.foldLeft(EitherT(Promise.successful(\/-(this)).future):EitherT[Future, Aoutch, E]) {
+      (pr, idx) => pr flatMap {x => x.applyIndex(idx)}
     }
 
 
-  def applyIndex(idx: Index)(implicit neo: NEP): ValidationPromised[Aoutch, E] =
+  def applyIndex(idx: Index)(implicit neo: NEP): EitherT[Future, Aoutch, E] =
     for {
       r <- neo.root;
-      v <- neo.request(
+      v <- EitherT(neo.request(
           Left(index(r) + "/" + idx.name + (if (idx.unique) "?unique" else ""))
         ) post (
           JsObject(Seq(
@@ -119,52 +127,52 @@ trait EntityElement[E <: Entity[E]] {this:E =>
             "uri" -> JsString(self)))
         ) map { resp =>
           resp.status match {
-            case x if x == 201 || x == 200 => OK(this) //index value created | updated
-            case x => KO(NonEmptyList[Exception](new IllegalStateException("Cannot apply index : got status " + x)))
+            case x if x == 201 || x == 200 => this.right //index value created | updated
+            case x => aoutch(new IllegalStateException("Cannot apply index : got status " + x)).left
           }
-        } transformer
+        })
     } yield v
 
 
-  def deleteFromIndexes(implicit neo: NEP): ValidationPromised[Aoutch, E] =
-      indexes.foldLeft(ValidationPromised(Promise.pure(OK(this))):ValidationPromised[Aoutch, E]) {
-        (pr, idx) => pr /~~> { x => x.deleteFromIndex(idx) }
+  def deleteFromIndexes(implicit neo: NEP): EitherT[Future, Aoutch, E] =
+      indexes.foldLeft(EitherT(Promise.successful(this.right[Aoutch]).future):EitherT[Future, Aoutch, E]) {
+        (pr, idx) => pr flatMap { x => x.deleteFromIndex(idx) }
       }
 
-  def deleteFromIndex(idx: Index)(implicit neo: NEP): ValidationPromised[Aoutch, E] =
+  def deleteFromIndex(idx: Index)(implicit neo: NEP): EitherT[Future, Aoutch, E] =
     for {
     r <- neo.root;
       //todo ?? cannot do that because we cannot assert that the current entity is not already updated with new properties
       // d <- neo.request(Left(index(r) + "/" + idx._1 + "/" + idx._3 + "/" + jsToString(idx._4(jsValue)) + "/" + id)) acceptJson() delete()//too externalize
-    v <-neo.request(
+    v <- EitherT(neo.request(
           Left(index(r) + "/" + idx.name + "/" + idx.key + "/" + id)
         ) acceptJson() delete() map { resp =>
           resp.status match {
-            case 204 => OK(this) //deleted
-            case x => KO(NonEmptyList[Exception](new IllegalStateException("Cannot delete from index : got status " + x)))
+            case 204 => this.right //deleted
+            case x => aoutch(new IllegalStateException("Cannot delete from index : got status " + x)).left
           }
-        } transformer
+        })
     } yield v
 
-  def delete(implicit neo: NEP): ValidationPromised[Aoutch, E] =
+  def delete(implicit neo: NEP): EitherT[Future, Aoutch, E] =
     for {
       //delete from indexes first
       d <- deleteFromIndexes
-      v <- neo.request(Left(self)) acceptJson() delete() map {
+      v <- EitherT(neo.request(Left(self)) acceptJson() delete() map {
             resp =>
               resp.status match {
-                case 204 => OK(this)
+                case 204 => this.right
                 case x if x == 409 => resp.encJson match {
-                  case jo: JsObject => KO(NonEmptyList(Failure(jo, x, "Cannot Delete Entity with relations")))
-                  case _ => KO(NonEmptyList(new IllegalStateException("delete Entity must return a JsObject")))
+                  case jo: JsObject => aoutch(Failure(jo, x, "Cannot Delete Entity with relations")).left[E]
+                  case _ => aoutch(new IllegalStateException("delete Entity must return a JsObject")).left[E]
                 }
                 case x => {
                   Logger.error("Error "+x+" for delete")
                   Logger.debug("Response Body:\n" + resp.body)
-                  KO(NonEmptyList(new IllegalStateException("TODO : delete entity error " + x)))
+                  aoutch(new IllegalStateException("TODO : delete entity error " + x)).left[E]
                 }
               }
-          } transformer
+          })
       } yield v
 
 }

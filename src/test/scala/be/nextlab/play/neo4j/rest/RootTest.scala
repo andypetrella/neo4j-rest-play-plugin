@@ -7,8 +7,16 @@ import play.api.test.Helpers._
 import Neo4JTestHelpers._
 import scalaz.{Success => OK, Failure => KO, _}
 import scalaz.Scalaz._
-import ValidationPromised._ 
-import Neo4JElement._ 
+import Neo4JElement._
+
+import play.api.Play.current
+
+import play.api.libs.concurrent.Akka
+import scala.concurrent.Promise
+import scala.concurrent.Future
+
+//Akkaz: implementation of Functor[Future] and Monad[Future]
+import scalaz.akkaz.future._
 
 /**
  *
@@ -18,22 +26,16 @@ import Neo4JElement._
  */
 
 object RootTest extends Specification {
+  def awaitT[A,B](x:EitherT[Future, A, B]) = await(x.run)
 
   def is = "Test service root" ^ {
 
     "Get it" ! neoApp {
-      await (endPoint.root) must be like {
-        case OK(r) => r.neo4jVersion must be_=== (plugin.neo4jVersion)
+      awaitT(endPoint.root) must be like {
+        case \/-(r) => r.neo4jVersion must be_=== (plugin.neo4jVersion)
       }
-    } ^ 
-    "Dummy test for >>*<< " ! {
-        val r1r2 = endPoint.root.map(x => Seq(x)).await.get >>*<< endPoint.root.map(x => Seq(x)).await.get
-
-        r1r2.toOption.get must be like {
-            case Seq(r1, r2) => ok("good")
-            case _ => ko("not good")
-        }
     }
+
   }
 
 }

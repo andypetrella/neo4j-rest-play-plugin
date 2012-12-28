@@ -1,6 +1,8 @@
 package be.nextlab.play.neo4j.rest
 
-import play.api.Play
+import play.api.Play.current
+
+import play.api.libs.concurrent.Akka
 
 import play.api.libs.json._
 
@@ -10,9 +12,6 @@ import play.api.libs.ws.WS._
 
 import scala.concurrent.stm._
 
-
-import play.api.libs.concurrent.Promise
-
 import com.ning.http.client.Realm.AuthScheme
 
 import scalaz.{Failure => KO, Success => OK, _}
@@ -20,8 +19,13 @@ import scalaz.Scalaz._
 
 import be.nextlab.play.neo4j.rest.Neo4JElement._
 
-import ValidationPromised._
+import scala.concurrent.Promise
+import scala.concurrent.Future
+import scala.concurrent.Await
+import scala.concurrent.duration._
 
+//Akkaz: implementation of Functor[Future] and Monad[Future]
+import scalaz.akkaz.future._
 
 /**
  * User: andy
@@ -29,19 +33,21 @@ import ValidationPromised._
 case class Neo4JEndPoint(protocol: String, host: String, port: Int, credentials: Option[(String, String)]) {
   import Neo4JEndPoint._
 
+  implicit val executionContext = Akka.system.dispatcher
+
   private lazy val serviceRootUrl =
-    request(Left(protocol + "://" + host + ":" + port)) acceptJson() get() map {
+    EitherT(request(Left(protocol + "://" + host + ":" + port)) acceptJson() get() map {
       resp =>
         resp.status match {
           case 200 => {
             resp.json match {
-              case jo: JsObject => OK((jo \ "data").as[String])
-              case r => KO(NonEmptyList[Exception](new IllegalArgumentException("The base request must return a JsObject containing data and manage")))
+              case jo: JsObject => (jo \ "data").as[String].right
+              case r => aoutch(new IllegalArgumentException("The base request must return a JsObject containing data and manage")).left
             }
           }
-          case status => KO(NonEmptyList(new IllegalStateException("The status is not ok " + status)))
+          case status => aoutch(new IllegalStateException("The status is not ok " + status)).left
         }
-    } transformer
+    })
 
   private[Neo4JEndPoint] def resolveFrom(from: Either[String, WSRequestHolder]): WSRequestHolder =
     from match {
@@ -62,31 +68,31 @@ case class Neo4JEndPoint(protocol: String, host: String, port: Int, credentials:
   private[this] def getRoot =
     for {
       url <- serviceRootUrl;
-      r <- request(Left(url)) acceptJson() get() map {
+      r <- EitherT(request(Left(url)) acceptJson() get() map {
         resp =>
           resp.status match {
             case 200 => {
               resp.json match {
-                case jo: JsObject => OK(Root(jo))
-                case x => KO(NonEmptyList[Exception](new IllegalArgumentException("Unexpected response while getting the root url : " + x)))
+                case jo: JsObject => Root(jo).right
+                case x => aoutch(new IllegalArgumentException("Unexpected response while getting the root url : " + x)).left[Root]
               }
             }
-            case status => KO(NonEmptyList[Exception](new IllegalStateException("The status is not ok " + status)))
+            case status => aoutch(new IllegalStateException("The status is not ok " + status)).left[Root]
           }
-      } transformer
+      })
     } yield r
 
   /**
    * STM ref to a validation promised to the Root. This particular type is kept for further monadic usages
    */
-  private[this] val r00t:Ref.View[Option[ValidationPromised[Aoutch, Root]]] = Ref(None:Option[ValidationPromised[Aoutch, Root]]).single
+  private[this] val r00t:Ref.View[Option[EitherT[Future, Aoutch, Root]]] = Ref(None:Option[EitherT[Future, Aoutch, Root]]).single
 
   /**
    * this methods helps in waiting for Neo4J Root request
    */
   private[this] def getR00t =
     try{
-      Some(Promise.pure(getRoot.promised.await.get).transformer)
+      Some(EitherT(Promise.successful(Await.result(getRoot.run, 1 second)).future))
     } catch {
       case x => {
         x.printStackTrace
@@ -99,7 +105,7 @@ case class Neo4JEndPoint(protocol: String, host: String, port: Int, credentials:
    *  - it hasn't requested yet
    *  - it has already failed
      */
-  lazy val root:ValidationPromised[Aoutch, Root] =
+  lazy val root:EitherT[Future, Aoutch, Root] =
       r00t()
         .getOrElse(
           r00t.transformAndGet(_ => getR00t)
