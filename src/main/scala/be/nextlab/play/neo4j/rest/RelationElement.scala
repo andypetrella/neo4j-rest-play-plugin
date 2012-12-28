@@ -27,7 +27,7 @@ trait RelationElement { this:Relation =>
   import RelationElement._
   import JsValueHelper._
 
-  lazy val `type` = (jsValue \ "type").as[String]
+  lazy val rtype = (jsValue \ "type").as[String]
 
   //START
   lazy val _start = (jsValue \ "start").as[String]
@@ -63,14 +63,14 @@ object RelationElement {
     val zero = Relation(JsObject(Seq("data" -> JsObject(Seq()))))
   }
 
-  def apply(start: Either[String, Node], end: Either[String, Node], `type`: String, indexes: Seq[Index], data: (String, JsValue)*): Relation =
+  def apply(start: Either[String, Node], end: Either[String, Node], rtype: String, indexes: Seq[Index], data: (String, JsValue)*): Relation =
     Relation(
       jsValue = JsObject(
         Seq(
           ("data" -> JsObject(fields = data.toSeq)),
           ("start" -> JsString(start.fold(s => s, n => n.self))),
           ("end" -> JsString(end.fold(s => s, n => n.self))),
-          ("type" -> JsString(`type`))
+          ("type" -> JsString(rtype))
         )
       ),
       indexes = indexes

@@ -42,7 +42,7 @@ trait NodeElement {
   def createRelationship(r: Relation)(implicit neo: NEP):ValidationPromised[Aoutch, Relation] =
     neo.request(Left(_createRelationship)) acceptJson() post (JsObject(Seq(
       "to" -> JsString(r._end),
-      "type" -> JsString(r.`type`),
+      "type" -> JsString(r.rtype),
       "data" -> r.data
     ))) map {
       resp => resp.status match {

@@ -55,14 +55,14 @@ object Node {
 
 case class Relation(jsValue: JsObject, indexes: Seq[Index] = Nil) extends RelationElement with Entity[Relation]
 object Relation {
-  def apply(start: Either[String, Node], end: Either[String, Node], `type`: String, indexes: Seq[Index], data: (String, JsValue)*): Relation =
+  def apply(start: Either[String, Node], end: Either[String, Node], rtype: String, indexes: Seq[Index], data: (String, JsValue)*): Relation =
     Relation(
       jsValue = JsObject(
         Seq(
           ("data" -> JsObject(fields = data.toSeq)),
           ("start" -> JsString(start.fold(s => s, n => n.self))),
           ("end" -> JsString(end.fold(s => s, n => n.self))),
-          ("type" -> JsString(`type`))
+          ("type" -> JsString(rtype))
         )
       ),
       indexes = indexes
