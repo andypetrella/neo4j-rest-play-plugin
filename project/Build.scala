@@ -6,7 +6,7 @@ import Keys._
 object MinimalBuild extends Build {
   val SNAPSHOT = "-SNAPSHOT"
 
-  lazy val buildVersion =  "0.0.5" + SNAPSHOT
+  lazy val buildVersion =  "0.0.4" + SNAPSHOT
 
   lazy val typesafeSnapshot = "Typesafe Snapshots Repository" at "http://repo.typesafe.com/typesafe/snapshots/"
   lazy val typesafe = "Typesafe Repository" at "http://repo.typesafe.com/typesafe/releases/"
