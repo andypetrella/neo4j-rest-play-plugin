@@ -6,22 +6,23 @@ import Keys._
 object MinimalBuild extends Build {
   val SNAPSHOT = "-SNAPSHOT"
 
-  lazy val buildVersion =  "0.0.4" + SNAPSHOT
+  lazy val buildVersion =  "0.0.5" + SNAPSHOT
 
   lazy val typesafeSnapshot = "Typesafe Snapshots Repository" at "http://repo.typesafe.com/typesafe/snapshots/"
   lazy val typesafe = "Typesafe Repository" at "http://repo.typesafe.com/typesafe/releases/"
 
   val scalazVersionNumber = "7.0.0-M7"
-  val scalaz = "org.scalaz" %% "scalaz-core" % scalazVersionNumber withSources
+  val scalaz = "org.scalaz" %% "scalaz-core" % scalazVersionNumber
 
   val akkaz = "akkaz" %% "akkaz" % "0.0.1"
 
 
-  lazy val neo4j                   = "org.neo4j.app" % "neo4j-server" % "1.9.M01" % "test" classifier "static-web" classifier ""
-  lazy val neo4jkernel             = "org.neo4j" % "neo4j-kernel" % "1.9.M01" % "test"  classifier "tests" classifier ""
-  lazy val jerseyForNeo4J          = "com.sun.jersey" % "jersey-core" % "1.9" % "test"
+  val neo4jVersion                  = "1.9.M03"
+  lazy val neo4j                    = "org.neo4j.app" % "neo4j-server" % neo4jVersion % "test" classifier "static-web" classifier ""
+  lazy val neo4jkernel              = "org.neo4j" % "neo4j-kernel" % neo4jVersion % "test"  classifier "tests" classifier ""
+  lazy val jerseyForNeo4J           = "com.sun.jersey" % "jersey-core" % "1.9" % "test"
 
-  val specs2 = "org.specs2" %% "specs2" % "1.12.3" % "test" withSources
+  val specs2 = "org.specs2" %% "specs2" % "1.12.3" % "test"
 
   val libDependencies = Seq(
     "play" %% "play" % "2.1-RC1",
