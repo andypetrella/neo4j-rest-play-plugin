@@ -71,7 +71,7 @@ trait EntityElement[E <: Entity[E]] {this:E =>
           u <- EitherT(neo.request(Left(_properties + "/" + key)) acceptJson() put(v) map { resp =>
                   /*indexes have been deleted => now update the properties*/
                   resp.status match {
-                    case 204 => this.updateData((key->v)).right[Aoutch]
+                    case 204 => this.updateData(((key->v)+:this.data.fields.filterNot(_._1==key)):_*).right[Aoutch]
                     case x => aoutch(new IllegalStateException("TODO : update prop error " + x + "(" + key + "," + v + ")")).left[E]
                   }
               });

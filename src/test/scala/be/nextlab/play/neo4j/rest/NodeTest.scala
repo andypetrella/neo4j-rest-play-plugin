@@ -181,6 +181,28 @@ object NodeTest extends Specification {
             case x => ko(" is not ok because we didn't got a Node, but " + x)
           }
         } ^
+        "Update one Node property keeps others" ! neoApp {
+          val root = endPoint.root
+          val keptKeyValue = (rnds, JsString(rnds))
+          val key: String = rnds
+          val value: JsString = JsString(rnds)
+          val newValue: JsString = JsString(rnds)
+
+          val props = Seq(keptKeyValue, key -> value)
+          val index: Index = uniqueNodeIndex(key)
+          val node: Node = Node(Seq(index), props:_*)
+
+          awaitT(for {
+              r <- root;
+              n <- r.createNode(Some(node));
+              p <- n<+(key, Some(newValue))
+              //u <- r.getUniqueNode(uniqueKey, newValue)(indexName)
+            } yield p
+          ) must be like {
+            case \/-(n) => (n.data \ keptKeyValue._1) must be_==(keptKeyValue._2)
+            case x => ko(" is not ok because we didn't got a Node, but " + x)
+          }
+        } ^
         "Update a Node and get with old value is None" ! neoApp {
           val root = endPoint.root
           val key: String = rnds

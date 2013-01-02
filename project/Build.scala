@@ -8,9 +8,6 @@ object MinimalBuild extends Build {
 
   lazy val buildVersion =  "0.0.4" + SNAPSHOT
 
-  lazy val typesafeSnapshot = "Typesafe Snapshots Repository" at "http://repo.typesafe.com/typesafe/snapshots/"
-  lazy val typesafe = "Typesafe Repository" at "http://repo.typesafe.com/typesafe/releases/"
-
   val scalazVersionNumber = "7.0.0-M7"
   val scalaz = "org.scalaz" %% "scalaz-core" % scalazVersionNumber
 
@@ -48,8 +45,6 @@ object MinimalBuild extends Build {
 
       version := buildVersion,
       organization := "be.nextlab",
-
-      //resolvers ++= Seq(typesafe, typesafeSnapshot),//, cloudbeesRepo),
 
       javacOptions += "-Xlint:unchecked",
       libraryDependencies ++= libDependencies,
