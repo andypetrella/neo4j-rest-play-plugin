@@ -19,9 +19,7 @@ import scalaz.Scalaz._
 
 import be.nextlab.play.neo4j.rest.Neo4JElement._
 
-import scala.concurrent.Promise
-import scala.concurrent.Future
-import scala.concurrent.Await
+import scala.concurrent.{Promise, Future, Await}
 import scala.concurrent.duration._
 
 //Akkaz: implementation of Functor[Future] and Monad[Future]
