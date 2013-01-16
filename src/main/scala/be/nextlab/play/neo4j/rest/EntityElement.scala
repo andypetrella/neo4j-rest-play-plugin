@@ -68,54 +68,45 @@ trait EntityElement[E <: Entity[E]] {this:E =>
       case Some(v) =>
         for {
           a <- this.deleteFromIndexes; //TODO optimize
-          u <- EitherT(neo.request(Left(_properties + "/" + key)) acceptJson() put(v) map { resp =>
-                  /*indexes have been deleted => now update the properties*/
-                  resp.status match {
-                    case 204 => this.updateData(((key->v)+:this.data.fields.filterNot(_._1==key)):_*).right[Aoutch]
-                    case x => aoutch(new IllegalStateException("TODO : update prop error " + x + "(" + key + "," + v + ")")).left[E]
+          u <- EitherT(neo.request(Left(_properties + "/" + key)) acceptJson() put(v) map {
+                  withNotHandledStatus(Seq(204)) {
+                    case JsNull => this.updateData(((key->v)+:this.data.fields.filterNot(_._1==key)):_*).right[Exception]
                   }
-              });
+                });
           b <- u.applyIndexes //reapply indexes after update
         } yield b
 
       //case None =>
     }
 
-  def properties(data: Option[JsObject])(implicit neo: NEP, builder:EntityBuilder[E]): EitherT[Future, Aoutch, E] =
+  def properties(data: Option[JsObject])(implicit neo: NEP, builder:EntityBuilder[E]): EitherT[Future, Exception, E] =
     data match {
 
       case Some(d) => for {
           a <- this.deleteFromIndexes;
-          u <- EitherT(neo.request(Left(_properties)) acceptJson() put(d) map { resp =>
-                  /*indexes have been deleted => now update the properties*/
-                  resp.status match {
-                    case 204 => this.updateData(d.fields: _*).right[Aoutch]
-                    case x => aoutch(new IllegalStateException("TODO : update props error " + x + "(" + d + ")")).left[E]
-                  }
-              })
+          u <- EitherT(neo.request(Left(_properties)) acceptJson() put(d) map {
+                            withNotHandledStatus(Seq(204)) {
+                              case JsNull => this.updateData(d.fields: _*).right[Exception]
+                            }
+                          })
           b <- u.applyIndexes //apply indexes after update
         } yield b
 
       case None => EitherT(neo.request(Left(_properties)) acceptJson() get() map {
-        resp =>
-          resp.status match {
-            case 200 => resp.encJson match {
-              case j: JsObject => this.updateData(j.fields: _*).right[Aoutch]
-              case _ => aoutch(new IllegalArgumentException("Get Properties for Entity must return a JsObject")).left[E]
-            }
-            case x => aoutch(new IllegalStateException("TODO : get props error " + x)).left[E]
-          }
+        withNotHandledStatus(Seq(200)) {
+          case j: JsObject => this.updateData(j.fields: _*).right[Exception]
+        }
       })
     }
 
 
-  def applyIndexes(implicit neo: NEP): EitherT[Future, Aoutch, E] =
-    indexes.foldLeft(EitherT(Promise.successful(\/-(this)).future):EitherT[Future, Aoutch, E]) {
+  def applyIndexes(implicit neo: NEP): EitherT[Future, Exception, E] =
+    indexes.foldLeft(EitherT(Promise.successful(\/-(this)).future):EitherT[Future, Exception, E]) {
       (pr, idx) => pr flatMap {x => x.applyIndex(idx)}
     }
 
 
-  def applyIndex(idx: Index)(implicit neo: NEP): EitherT[Future, Aoutch, E] =
+  def applyIndex(idx: Index)(implicit neo: NEP): EitherT[Future, Exception, E] =
     for {
       r <- neo.root;
       v <- EitherT(neo.request(
@@ -125,53 +116,51 @@ trait EntityElement[E <: Entity[E]] {this:E =>
             "key" -> JsString(idx.key),
             "value" -> idx.f(jsValue),
             "uri" -> JsString(self)))
-        ) map { resp =>
-          resp.status match {
-            case x if x == 201 || x == 200 => this.right //index value created | updated
-            case x => aoutch(new IllegalStateException("Cannot apply index : got status " + x)).left
-          }
+        ) map {
+            withNotHandledStatus(Seq(200, 201)) {
+              case j: JsObject => this.right //index value created | updated
+            }
         })
     } yield v
 
 
-  def deleteFromIndexes(implicit neo: NEP): EitherT[Future, Aoutch, E] =
-      indexes.foldLeft(EitherT(Promise.successful(this.right[Aoutch]).future):EitherT[Future, Aoutch, E]) {
-        (pr, idx) => pr flatMap { x => x.deleteFromIndex(idx) }
+  def deleteFromIndexes(implicit neo: NEP): EitherT[Future, Exception, E] =
+      indexes.toList.map {
+        idx => this.deleteFromIndex(idx)
+      }.sequenceU.map{
+        es => if (es.isEmpty) this else es.last
       }
+      // indexes.foldLeft(EitherT(Promise.successful(this.right[Exception]).future):EitherT[Future, Exception, E]) {
+      //   (pr, idx) => pr flatMap { x => x.deleteFromIndex(idx) }
+      // }
 
-  def deleteFromIndex(idx: Index)(implicit neo: NEP): EitherT[Future, Aoutch, E] =
+  def deleteFromIndex(idx: Index)(implicit neo: NEP): EitherT[Future, Exception, E] =
     for {
     r <- neo.root;
       //todo ?? cannot do that because we cannot assert that the current entity is not already updated with new properties
       // d <- neo.request(Left(index(r) + "/" + idx._1 + "/" + idx._3 + "/" + jsToString(idx._4(jsValue)) + "/" + id)) acceptJson() delete()//too externalize
     v <- EitherT(neo.request(
           Left(index(r) + "/" + idx.name + "/" + idx.key + "/" + id)
-        ) acceptJson() delete() map { resp =>
-          resp.status match {
-            case 204 => this.right //deleted
-            case x => aoutch(new IllegalStateException("Cannot delete from index : got status " + x)).left
+        ) acceptJson() delete() map {
+          withNotHandledStatus(Seq(204)) {
+            case JsNull => this.right //deleted
           }
         })
     } yield v
 
-  def delete(implicit neo: NEP): EitherT[Future, Aoutch, E] =
+  def delete(implicit neo: NEP): EitherT[Future, Exception, E] =
     for {
       //delete from indexes first
       d <- deleteFromIndexes
       v <- EitherT(neo.request(Left(self)) acceptJson() delete() map {
-            resp =>
-              resp.status match {
-                case 204 => this.right
-                case x if x == 409 => resp.encJson match {
-                  case jo: JsObject => aoutch(Failure(jo, x, "Cannot Delete Entity with relations")).left[E]
-                  case _ => aoutch(new IllegalStateException("delete Entity must return a JsObject")).left[E]
+              withNotHandledStatus(Seq(204), Seq(409)) (
+                {
+                  case JsNull => this.right
+                },
+                {
+                  case jo: JsObject => Failure.badStatus(jo, Seq(204), 409, "Cannot Delete Entity with relations").left[E]
                 }
-                case x => {
-                  Logger.error("Error "+x+" for delete")
-                  Logger.debug("Response Body:\n" + resp.body)
-                  aoutch(new IllegalStateException("TODO : delete entity error " + x)).left[E]
-                }
-              }
+              )
           })
       } yield v
 

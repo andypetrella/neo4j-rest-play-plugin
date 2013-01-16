@@ -7,6 +7,7 @@ import play.api.libs.json.Json._
 
 import play.api.libs.concurrent.Promise
 
+import play.api.libs.ws.Response
 import play.api.libs.ws.WS.WSRequestHolder
 
 import be.nextlab.play.neo4j.rest.{Neo4JEndPoint => NEP}
@@ -16,7 +17,11 @@ import be.nextlab.play.neo4j.rest.Neo4JEndPoint._
 import scalaz.{Failure => KO, Success => OK, _}
 import scalaz.Scalaz._
 
-import scala.concurrent.Future
+import scala.concurrent.{Future, ExecutionContext}
+
+//Akkaz: implementation of Functor[Future] and Monad[Future]
+import scalaz.akkaz.future._
+
 /**
  * User: andy
  */
@@ -85,19 +90,34 @@ case class CypherResult(jsValue: JsObject) extends Neo4JElement {
   def opt(column:String):Option[Seq[JsValue]] = transposedResultAsMap.get(column)
 }
 
-case class Failure(jsValue: JsObject, status: Int, info: String) extends Exception with Neo4JElement {
+trait Failure extends Exception with Neo4JElement {
   type Js = JsObject
+
+  def info:String
+  def status:Int
 
   lazy val message = (jsValue \ "message").asOpt[String]
   lazy val exception = (jsValue \ "exception").as[String]
 
   lazy val stacktrace = (jsValue \ "stacktrace").as[List[String]]
 
-  override def toString(): String = "Fails with status " + status + " and message " + message.getOrElse("<nothing>")
+  override def toString(): String = "Fails with status "+status + " and message " + message.getOrElse("<no-message>") + " and also " + info
 
 }
+trait BadStatus extends Failure {
+  def expectedStatuses:Seq[Int]
+}
 
-case class Empty() extends Neo4JElement {
+object Failure {
+  def badStatus(jsonValue:JsObject, expected:Seq[Int], resultStatus:Int, extraInfo:String = "<no-info>") = new BadStatus {
+    val jsValue = jsonValue
+    val info = extraInfo
+    val status = resultStatus
+    val expectedStatuses = expected
+  }
+}
+
+case object Empty extends Neo4JElement {
   type Js = JsNull.type
 
   lazy val jsValue = JsNull
@@ -106,11 +126,52 @@ case class Empty() extends Neo4JElement {
 
 
 object Neo4JElement {
+  implicit class RecoverResult[T](e:EitherT[Future, Exception, T]) {
+    def recover[U>:T](f:Exception => U)(implicit ec:ExecutionContext):EitherT[Future, Exception, U] = e.validationed { v =>
+      v.fold(
+        ex => f(ex).right,
+        s => s.right
+      ).validation
+    }
+  }
+  implicit def wrapEitherT[E](f:Future[Exception \/ E]):EitherT[Future, Exception, E] = EitherT(f)
 
-  type Aoutch = NonEmptyList[Exception]
 
-  implicit def aoutch(e:Exception):Aoutch = NonEmptyList[Exception](e)
+  def defaultNotHandler[T]:PartialFunction[JsValue,Exception\/T]=
+    {
+      case js:JsValue => new IllegalStateException("This status should be handled but not handler was given").left[T]
+    }
 
-  implicit def wrapEitherT[E](f:Future[Aoutch \/ E]):EitherT[Future, Aoutch, E] = EitherT(f)
+  def withNotHandledStatus[T](expected:Seq[Int], errors:Seq[Int] = Seq.empty)(f:PartialFunction[JsValue,Exception\/T], g:PartialFunction[JsValue,Exception\/T]=defaultNotHandler[T]):Response => Exception\/T =
+    (resp:Response) => {
+      val status = resp.status
+      lazy val js:JsValue = try {
+        resp.json
+      } catch {
+        case x => {
+          Logger.info("Unable to parse json! Should be handled by the continuation partial function => So returning JsNull")
+          JsNull
+        }
+      }
+
+      if (expected.contains(status)) {
+        if (f.isDefinedAt(js)) {
+          f(js)
+        } else {
+          new IllegalArgumentException("Handled error ("+status+") but bad JSON encoding: " + js).left
+        }
+      } else if (errors.contains(resp.status)) {
+        if (g.isDefinedAt(js)) {
+          g(js)
+        } else {
+          new IllegalArgumentException("Handled error ("+status+") but bad JSON encoding: " + js).left
+        }
+      } else {
+        js match {
+          case jo: JsObject => Failure.badStatus(jo, expected, resp.status).left
+          case _ => new IllegalStateException("Request with status ("+resp.status+") must return a JsObject").left
+        }
+      }
+    }
 
 }

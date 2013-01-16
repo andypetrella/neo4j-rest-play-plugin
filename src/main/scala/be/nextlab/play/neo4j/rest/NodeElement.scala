@@ -43,50 +43,41 @@ trait NodeElement {
 
   lazy val _createRelationship = (jsValue \ "create_relationship").as[String]
 
-  def createRelationship(r: Relation)(implicit neo: NEP):EitherT[Future, Aoutch, Relation] =
+  def createRelationship(r: Relation)(implicit neo: NEP):EitherT[Future, Exception, Relation] =
     neo.request(Left(_createRelationship)) acceptJson() post (JsObject(Seq(
       "to" -> JsString(r._end),
       "type" -> JsString(r.rtype),
       "data" -> r.data
     ))) map {
-      resp => resp.status match {
-        case 201 => resp.encJson match {
-          case o: JsObject => Relation(o, r.indexes).right
-          case x => aoutch(new IllegalStateException("create relation must return a JsObject")).left
-        }
+      withNotHandledStatus(Seq(201)) {
+        case o: JsObject => Relation(o, r.indexes).right
       }
     }
 
   lazy val _allRelationships = (jsValue \ "all_relationships").as[String]
-  def allRelationships(implicit neo: NEP):EitherT[Future, Aoutch, Seq[Relation]] =
+  def allRelationships(implicit neo: NEP):EitherT[Future, Exception, Seq[Relation]] =
     neo.request(Left(_allRelationships)) acceptJson() get() map {
-      resp => resp.status match {
-        case 200 => resp.encJson match {
-          case o: JsArray =>
-            o.value.foldLeft(Seq().right:Aoutch \/ Seq[Relation]){
-              (acc, j) => (acc, j) match {
-                case (\/-(s), (jo:JsObject)) => (Relation(jo) +: s).right
-                case x => aoutch(new IllegalArgumentException("get typed relations must return a JsArray o JsObject only")).left
-              }
+      withNotHandledStatus(Seq(200)) {
+        case o: JsArray =>
+          o.value.foldLeft(Seq().right:Exception \/ Seq[Relation]){
+            (acc, j) => (acc, j) match {
+              case (\/-(s), (jo:JsObject)) => (Relation(jo) +: s).right
+              case x => new IllegalArgumentException("get typed relations must return a JsArray o JsObject only").left
             }
-          case x => aoutch(new IllegalStateException("get typed relations must return a JsArray")).left
-        }
+          }
       }
     }
 
   lazy val _outgoingTypedRelationships = (jsValue \ "outgoing_typed_relationships").as[String]
-  def outgoingTypedRelationships(types: Seq[String])(implicit neo: NEP):EitherT[Future, Aoutch, Seq[Relation]] =
+  def outgoingTypedRelationships(types: Seq[String])(implicit neo: NEP):EitherT[Future, Exception, Seq[Relation]] =
     neo.request(Left(_outgoingTypedRelationships.replace("{-list|&|types}", types.mkString("&")))) acceptJson() get() map {
-      resp => resp.status match {
-        case 200 => resp.encJson match {
-          case o: JsArray => o.value.foldLeft(Seq().right:Aoutch \/ Seq[Relation]){
+      withNotHandledStatus(Seq(200)) {
+          case o: JsArray => o.value.foldLeft(Seq().right:Exception \/ Seq[Relation]){
             (acc, j) => (acc, j) match {
               case (\/-(s), (jo:JsObject)) => (Relation(jo) +: s).right
-              case x => aoutch(new IllegalArgumentException("get typed relations must return a JsArray o JsObject only")).left
+              case x => new IllegalArgumentException("get typed relations must return a JsArray o JsObject only").left
             }
           }
-          case x => aoutch(new IllegalStateException("get typed relations must return a JsArray")).left
-        }
       }
     }
 

@@ -104,14 +104,14 @@ object NodeTest extends Specification {
       val root = endPoint.root
       val node: Node = Node(Nil, "a" -> JsString("valueForA"))
       awaitT(for {
-        r <- root;
-        c <- r.createNode(Some(node));
-        d <- c.delete
+          r <- root
+          c <- r.createNode(Some(node))
+          d <- c.delete
         } yield (c, d)
       ) must be like {
         case \/-(((c: Node), (n: Node))) => n must be_==(c) and {
           awaitT(root flatMap (_.getNode(n.id))) must be like {
-            case -\/(nel:NonEmptyList[Exception]) if nel.head.isInstanceOf[Failure] && nel.head.asInstanceOf[Failure].status == 404 => ok("Get the deleted must return a Failure instance with 404 status")
+            case -\/(bad:BadStatus) if bad.status == 404 => ok("Get the deleted must return a Failure instance with 404 status")
             case x => ko("Get the deleted must return a Failure instance, got " + x)
           }
         }

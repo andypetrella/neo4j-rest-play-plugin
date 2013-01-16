@@ -35,16 +35,9 @@ case class Neo4JEndPoint(protocol: String, host: String, port: Int, credentials:
 
   private lazy val serviceRootUrl =
     EitherT(request(Left(protocol + "://" + host + ":" + port)) acceptJson() get() map {
-      resp =>
-        resp.status match {
-          case 200 => {
-            resp.json match {
-              case jo: JsObject => (jo \ "data").as[String].right
-              case r => aoutch(new IllegalArgumentException("The base request must return a JsObject containing data and manage")).left
-            }
-          }
-          case status => aoutch(new IllegalStateException("The status is not ok " + status)).left
-        }
+      withNotHandledStatus(Seq(200)) {
+        case jo: JsObject => (jo \ "data").as[String].right
+      }
     })
 
   private[Neo4JEndPoint] def resolveFrom(from: Either[String, WSRequestHolder]): WSRequestHolder =
@@ -67,23 +60,16 @@ case class Neo4JEndPoint(protocol: String, host: String, port: Int, credentials:
     for {
       url <- serviceRootUrl;
       r <- EitherT(request(Left(url)) acceptJson() get() map {
-        resp =>
-          resp.status match {
-            case 200 => {
-              resp.json match {
-                case jo: JsObject => Root(jo).right
-                case x => aoutch(new IllegalArgumentException("Unexpected response while getting the root url : " + x)).left[Root]
-              }
-            }
-            case status => aoutch(new IllegalStateException("The status is not ok " + status)).left[Root]
-          }
+        withNotHandledStatus(Seq(200)) {
+          case jo: JsObject => Root(jo).right
+        }
       })
     } yield r
 
   /**
    * STM ref to a validation promised to the Root. This particular type is kept for further monadic usages
    */
-  private[this] val r00t:Ref.View[Option[EitherT[Future, Aoutch, Root]]] = Ref(None:Option[EitherT[Future, Aoutch, Root]]).single
+  private[this] val r00t:Ref.View[Option[EitherT[Future, Exception, Root]]] = Ref(None:Option[EitherT[Future, Exception, Root]]).single
 
   /**
    * this methods helps in waiting for Neo4J Root request
@@ -103,7 +89,7 @@ case class Neo4JEndPoint(protocol: String, host: String, port: Int, credentials:
    *  - it hasn't requested yet
    *  - it has already failed
      */
-  lazy val root:EitherT[Future, Aoutch, Root] =
+  lazy val root:EitherT[Future, Exception, Root] =
       r00t()
         .getOrElse(
           r00t.transformAndGet(_ => getR00t)
@@ -115,24 +101,15 @@ case class Neo4JEndPoint(protocol: String, host: String, port: Int, credentials:
 case class WSRequestHolderW(w:WSRequestHolder) {
 
   def acceptJson():WSRequestHolder = w withHeaders (
-    "Accept" -> "application/json",
-    "Content-Type"->"application/json; charset=utf-8",
-    "Accept-Charset"->"utf-8",
-    "Content-Encoding"->"utf-8"
+    "Accept"            -> "application/json",
+    "Content-Type"      -> "application/json; charset=utf-8",
+    "Accept-Charset"    -> "utf-8",
+    "Content-Encoding"  -> "utf-8"
   )
 
 }
 
-case class WSResponseW(w:Response) {
-  import scala.xml._
-
-  def encBody = w.header("Content-Encoding").map{enc => w.getAHCResponse.getResponseBody(enc)}.getOrElse(w.body)
-  def encJson: JsValue = Json.parse(encBody)
-  def encXml: Elem = XML.loadString(encBody)
-}
-
 object Neo4JEndPoint {
   implicit def wrapHolder(w:WSRequestHolder):WSRequestHolderW = WSRequestHolderW(w)
-  implicit def wrapResponse(r:Response):WSResponseW = WSResponseW(r)
 }
 
