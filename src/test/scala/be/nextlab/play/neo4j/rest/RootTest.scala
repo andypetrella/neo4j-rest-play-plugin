@@ -26,13 +26,13 @@ import scalaz.akkaz.future._
  */
 
 object RootTest extends Specification {
-  def awaitT[A,B](x:EitherT[Future, A, B]) = await(x.run)
+  implicit lazy val executionContext = Akka.system.dispatcher
 
   def is = "Test service root" ^ {
 
     "Get it" ! neoApp {
-      awaitT(endPoint.root) must be like {
-        case \/-(r) => r.neo4jVersion must be_=== (plugin.neo4jVersion)
+      await(endPoint.root) must be like {
+        case r:Root => r.neo4jVersion must be_=== (plugin.neo4jVersion)
       }
     }
 

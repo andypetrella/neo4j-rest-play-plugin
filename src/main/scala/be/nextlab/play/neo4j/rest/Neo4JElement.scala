@@ -14,13 +14,13 @@ import be.nextlab.play.neo4j.rest.{Neo4JEndPoint => NEP}
 import be.nextlab.play.neo4j.rest.Neo4JEndPoint._
 
 
-import scalaz.{Failure => KO, Success => OK, _}
-import scalaz.Scalaz._
+import scalaz.Monoid
+//import scalaz.Scalaz._
 
 import scala.concurrent.{Future, ExecutionContext}
 
 //Akkaz: implementation of Functor[Future] and Monad[Future]
-import scalaz.akkaz.future._
+//import scalaz.akkaz.future._
 
 /**
  * User: andy
@@ -108,14 +108,24 @@ trait BadStatus extends Failure {
   def expectedStatuses:Seq[Int]
 }
 
-object Failure {
-  def badStatus(jsonValue:JsObject, expected:Seq[Int], resultStatus:Int, extraInfo:String = "<no-info>") = new BadStatus {
-    val jsValue = jsonValue
-    val info = extraInfo
-    val status = resultStatus
-    val expectedStatuses = expected
-  }
+case class NotFound(jsValue:JsObject, expectedStatuses:Seq[Int], info:String = "<no-info>") extends BadStatus {
+  def status:Int = 404
 }
+
+object Failure {
+  def badStatus(jsonValue:JsObject, expected:Seq[Int], resultStatus:Int, extraInfo:String = "<no-info>") =
+    resultStatus match {
+      case 404 => NotFound(jsonValue, expected, extraInfo)
+      case x =>
+        new BadStatus {
+          val jsValue = jsonValue
+          val info = extraInfo
+          val status = x
+          val expectedStatuses = expected
+        }
+    }
+}
+
 
 case object Empty extends Neo4JElement {
   type Js = JsNull.type
@@ -126,29 +136,29 @@ case object Empty extends Neo4JElement {
 
 
 object Neo4JElement {
-  implicit class RecoverResult[T](e:EitherT[Future, Exception, T]) {
-    def recover[U>:T](f:Exception => U)(implicit ec:ExecutionContext):EitherT[Future, Exception, U] = e.validationed { v =>
-      v.fold(
-        ex => f(ex).right,
-        s => s.right
-      ).validation
-    }
-  }
-  implicit def wrapEitherT[E](f:Future[Exception \/ E]):EitherT[Future, Exception, E] = EitherT(f)
+  // implicit class RecoverResult[T](e:EitherT[Future, Exception, T]) {
+  //   def recover[U>:T](f:Exception => U)(implicit ec:ExecutionContext):EitherT[Future, Exception, U] = e.validationed { v =>
+  //     v.fold(
+  //       ex => f(ex).right,
+  //       s => s.right
+  //     ).validation
+  //   }
+  // }
+  //implicit def wrapEitherT[E](f:Future[Exception \/ E]):EitherT[Future, Exception, E] = EitherT(f)
 
 
-  def defaultNotHandler[T]:PartialFunction[JsValue,Exception\/T]=
+  def defaultNotHandler[T]:PartialFunction[JsValue,Exception]=
     {
-      case js:JsValue => new IllegalStateException("This status should be handled but not handler was given").left[T]
+      case js:JsValue => new IllegalStateException("This status should be handled but not handler was given")
     }
 
-  def withNotHandledStatus[T](expected:Seq[Int], errors:Seq[Int] = Seq.empty)(f:PartialFunction[JsValue,Exception\/T], g:PartialFunction[JsValue,Exception\/T]=defaultNotHandler[T]):Response => Exception\/T =
+  def withNotHandledStatus[T](expected:Seq[Int], errors:Seq[Int] = Seq.empty)(f:PartialFunction[JsValue,T], g:PartialFunction[JsValue,Exception]=defaultNotHandler[T]):Response => T =
     (resp:Response) => {
       val status = resp.status
       lazy val js:JsValue = try {
         resp.json
       } catch {
-        case x => {
+        case x:Throwable => {
           Logger.info("Unable to parse json! Should be handled by the continuation partial function => So returning JsNull")
           JsNull
         }
@@ -158,20 +168,21 @@ object Neo4JElement {
         if (f.isDefinedAt(js)) {
           f(js)
         } else {
-          new IllegalArgumentException("Handled error ("+status+") but bad JSON encoding: " + js).left
+          throw new IllegalArgumentException("Handled error ("+status+") but bad JSON encoding: " + js)
         }
       } else if (errors.contains(resp.status)) {
         if (g.isDefinedAt(js)) {
-          g(js)
+          throw g(js)
         } else {
-          new IllegalArgumentException("Handled error ("+status+") but bad JSON encoding: " + js).left
+          throw new IllegalArgumentException("Handled error ("+status+") but bad JSON encoding: " + js)
         }
       } else {
         js match {
-          case jo: JsObject => Failure.badStatus(jo, expected, resp.status).left
-          case _ => new IllegalStateException("Request with status ("+resp.status+") must return a JsObject").left
+          case jo: JsObject => throw Failure.badStatus(jo, expected, resp.status)
+          case _ => throw new IllegalStateException("Request with status ("+resp.status+") must return a JsObject")
         }
       }
     }
+
 
 }

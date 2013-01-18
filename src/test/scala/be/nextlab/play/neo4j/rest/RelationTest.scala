@@ -16,7 +16,7 @@ import scala.concurrent.Promise
 import scala.concurrent.Future
 
 //Akkaz: implementation of Functor[Future] and Monad[Future]
-import scalaz.akkaz.future._
+//import scalaz.akkaz.future._
 
 /**
  *
@@ -30,14 +30,12 @@ object RelationTest extends Specification {
 
   def rnds = BigInt(100, scala.util.Random).toString(36)
 
-  def awaitT[A,B](x:EitherT[Future, A, B]) = await(x.run)
-
   def is = "Deal with relations in Neo4J using the REST api " ^ {
 
     "Based on Node " ^ {
 
       "Create outgoing of the Reference Node" ! neoApp {
-        awaitT(for {
+        await(for {
           r <- endPoint.root;
           ref <- r.referenceNode;
           newNode <- r.createNode(None);
@@ -49,15 +47,15 @@ object RelationTest extends Specification {
                 )
           } yield (ref, rel, newNode)
         ) match {
-          case \/-(((ref: Node), (r: Relation), (newNode: Node))) =>
+          case ((ref: Node), (r: Relation), (newNode: Node)) =>
             (r.self must be_!=("")) and
               (r.rtype must be_==("TEST")) and
-              (awaitT(r.end) must be like {
-                case \/-(n) if n == newNode => ok("got the good end")
+              (await(r.end) must be like {
+                case n if n == newNode => ok("got the good end")
                 case _ => ko("unable to retrieve the end node")
               }) and
-              (awaitT(r.start) must be like {
-                case \/-(n) if n == ref => ok("got the good start")
+              (await(r.start) must be like {
+                case n if n == ref => ok("got the good start")
                 case _ => ko("unable to retrieve the start node")
               })
           case _ => ko("bad match")
@@ -65,7 +63,7 @@ object RelationTest extends Specification {
         }
       } ^
         "Get outgoing relation of the Reference Node" ! neoApp {
-          awaitT(for {
+          await(for {
             r <- endPoint.root;
             ref <- r.referenceNode;
             newNode <- r.createNode(None);
@@ -79,7 +77,7 @@ object RelationTest extends Specification {
             } yield (ref, rel, rels)
           ) match {
 
-            case \/-(((ref: Node), (r: Relation), (rs: Seq[Relation]))) => rs match {
+            case ((ref: Node), (r: Relation), (rs: Seq[Relation])) => rs match {
               case Nil => ko("Must return at least one Relation")
               case xs => xs must haveOneElementLike {case i:Relation => (i.rtype must be_==("TEST")) and (i.id must be_==(r.id))}
             }

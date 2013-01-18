@@ -14,14 +14,14 @@ import be.nextlab.play.neo4j.rest.{Neo4JEndPoint => NEP}
 import be.nextlab.play.neo4j.rest.Neo4JEndPoint._
 
 
-import scalaz.{Failure => KO, Success =>  OK, _ }
-import scalaz.Scalaz._
+import scalaz.Monoid
+// import scalaz.Scalaz._
 
-import scala.concurrent.Promise
-import scala.concurrent.Future
+import scala.concurrent.{Future, ExecutionContext}
 
 //Akkaz: implementation of Functor[Future] and Monad[Future]
-import scalaz.akkaz.future._
+// import scalaz.akkaz.future._
+
 /**
  * User: andy
  */
@@ -30,7 +30,7 @@ trait RootElement { self: Neo4JElement =>
   import Neo4JElement._
   import JsValueHelper._
 
-  implicit val executionContext = Akka.system.dispatcher
+  //implicit val executionContext = Akka.system.dispatcher
 
   type Js = JsObject
 
@@ -51,33 +51,34 @@ trait RootElement { self: Neo4JElement =>
   //////REFERENCE/////
   lazy val _referenceNode = (jsValue \ "reference_node").as[String]
 
-  def referenceNode(implicit neo: NEP) = getNode(_referenceNode)
+  def referenceNode(implicit neo: NEP, ec:ExecutionContext) = getNode(_referenceNode)
 
 
   //////NODE/////
   lazy val _node = (jsValue \ "node").as[String]
 
-  def getNode(id: Int)(implicit neo: NEP): EitherT[Future, Exception, Node] = getNode(_node + "/" + id)
+  def getNode(id: Int)(implicit neo: NEP, ec:ExecutionContext): Future[Node] = getNode(_node + "/" + id)
 
-  def getNode[U](url: String)(implicit neo: NEP): EitherT[Future, Exception, Node] =
+  def getNode(url: String)(implicit neo: NEP, ec:ExecutionContext): Future[Node] =
     neo.request(Left(url)) acceptJson() get() map {
       withNotHandledStatus(Seq(200)) {
-        case jo:JsObject => Node(jo).right
+        case jo:JsObject => Node(jo)
       }
     }
 
-  def createNode(n: Option[Node])(implicit neo: NEP): EitherT[Future, Exception, Node] = {
+
+  def createNode(n: Option[Node])(implicit neo: NEP, ec:ExecutionContext): Future[Node] = {
     val holder: WSRequestHolder = neo.request(Left(_node)) acceptJson()
 
     for {
-      n <- EitherT((n match {
-          case None => holder post (JsObject(Seq()))
-          case Some(node) => holder post (node.data)
-        }) map {
-          withNotHandledStatus(Seq(201)) {
-            case jo: JsObject => Node(jo, n map { _.indexes } getOrElse (Nil)).right
-          }
-        })
+      n <- (n match {
+                case None => holder post (JsObject(Seq()))
+                case Some(node) => holder post (node.data)
+            }).map {
+              withNotHandledStatus(Seq(201)) {
+                case jo: JsObject => Node(jo, n map { _.indexes } getOrElse (Nil))
+              }
+            }
       x <- n.applyIndexes//.run map { v => v.fold( //TODO : use recover probably
       //     f => {
       //       n.delete //WARN:: we delete because indexes has failed...
@@ -91,20 +92,20 @@ trait RootElement { self: Neo4JElement =>
   }
 
 
-  def byUniqueIndex[E<:Entity[E]](index:Index)(implicit neo:NEP, builder:EntityBuilder[E]):JsValue => EitherT[Future, Exception, Option[E]] =
+  def byUniqueIndex[E<:Entity[E]](index:Index)(implicit neo:NEP, builder:EntityBuilder[E], ec:ExecutionContext):JsValue => Future[Option[E]] =
     jsValue =>
       neo.request(Left(_nodeIndex + "/" + index.name + "/" + index.key + "/" + jsToString(jsValue))) acceptJson() get() map {
         withNotHandledStatus(Seq(200)) {
-          case jo: JsObject => Some(builder(jo, Seq())).right
+          case jo: JsObject => Some(builder(jo, Seq()))
           case ja: JsArray => ja.value match {
-            case Nil => None.right
-            case (a: JsObject) :: Nil => Some(builder(a, Seq())).right
-            case x => new IllegalArgumentException("Get Unique Entity must return a JsObject or a singleton array and not " + x).left
+            case Nil => None
+            case (a: JsObject) :: Nil => Some(builder(a, Seq()))
+            case x => throw new IllegalArgumentException("Get Unique Entity must return a JsObject or a singleton array and not " + x)
           }
         }
       }
 
-  def getUniqueNode(key: String, value: JsValue)(indexName: String)(implicit neo: NEP, builder:EntityBuilder[Node]): EitherT[Future, Exception, Option[Node]] = {
+  def getUniqueNode(key: String, value: JsValue)(indexName: String)(implicit neo: NEP, builder:EntityBuilder[Node], ec:ExecutionContext): Future[Option[Node]] = {
     val a = byUniqueIndex(Index(indexName, true, key, (_:JsObject) => value))
     a(value)
   }
@@ -113,10 +114,10 @@ trait RootElement { self: Neo4JElement =>
   //////CYPHER/////
   lazy val _cypher = (jsValue \ "cypher").as[String]
 
-  def cypher(c: Cypher)(implicit neo: NEP):EitherT[Future, Exception, CypherResult] =
+  def cypher(c: Cypher)(implicit neo: NEP, ec:ExecutionContext):Future[CypherResult] =
     neo.request(Left(_cypher)) acceptJson() post (c.toQuery) map {
       withNotHandledStatus(Seq(200)) {
-        case j: JsObject => CypherResult(j).right
+        case j: JsObject => CypherResult(j)
       }
     }
 
@@ -124,6 +125,5 @@ trait RootElement { self: Neo4JElement =>
   lazy val _nodeIndex = (jsValue \ "node_index").as[String]
   //////RELATION INDEXES/////
   lazy val _relationshipIndex = (jsValue \ "relationship_index").as[String]
-
 
 }

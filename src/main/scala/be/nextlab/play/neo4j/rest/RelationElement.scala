@@ -15,14 +15,14 @@ import be.nextlab.play.neo4j.rest.{Neo4JEndPoint => NEP}
 import be.nextlab.play.neo4j.rest.Neo4JEndPoint._
 
 
-import scalaz.{Failure => KO, Success => OK, _}
-import scalaz.Scalaz._
+import scalaz.Monoid
+// import scalaz.Scalaz._
 
-import scala.concurrent.Promise
-import scala.concurrent.Future
+import scala.concurrent.{Future, ExecutionContext}
 
 //Akkaz: implementation of Functor[Future] and Monad[Future]
-import scalaz.akkaz.future._
+//import scalaz.akkaz.future._
+
 /**
  * User: andy
  */
@@ -36,12 +36,12 @@ trait RelationElement { this:Relation =>
   //START
   lazy val _start = (jsValue \ "start").as[String]
 
-  def start(implicit neo: NEP) = neo.root flatMap { root => root.getNode(_start) }
+  def start(implicit neo: NEP, ec:ExecutionContext) = neo.root flatMap { root => root.getNode(_start) }
 
   //END
   lazy val _end = (jsValue \ "end").as[String]
 
-  def end(implicit neo: NEP) = neo.root flatMap { _.getNode(_end) }
+  def end(implicit neo: NEP, ec:ExecutionContext) = neo.root flatMap { _.getNode(_end) }
 
   def ++(other: Relation)(implicit m: Monoid[Relation]) = m append(this, other)
 
