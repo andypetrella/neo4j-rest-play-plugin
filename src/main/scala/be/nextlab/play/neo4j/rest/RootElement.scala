@@ -57,12 +57,30 @@ trait RootElement { self: Neo4JElement =>
   //////NODE/////
   lazy val _node = (jsValue \ "node").as[String]
 
-  def getNode(id: Int)(implicit neo: NEP, ec:ExecutionContext): Future[Node] = getNode(_node + "/" + id)
+  private[this] val findNodeRegex = "(.*/)node$".r
+  lazy val _relation =
+    _node match {
+      case findNodeRegex(pref) => pref+"relationship"
+      case _ => throw new IllegalArgumentException(_node + " doens't match " + findNodeRegex)
+    }
 
-  def getNode(url: String)(implicit neo: NEP, ec:ExecutionContext): Future[Node] =
+
+  def getRelation(id: Int)(implicit neo: NEP, ec:ExecutionContext): Future[Relation] = getRelation(_relation + "/" + id)
+  def getRelation(url: String)(implicit neo: NEP, ec:ExecutionContext): Future[Relation] = {
+    import RelationElement._
+    getEntity(url)
+  }
+
+  def getNode(id: Int)(implicit neo: NEP, ec:ExecutionContext): Future[Node] = getNode(_node + "/" + id)
+  def getNode(url: String)(implicit neo: NEP, ec:ExecutionContext): Future[Node] = {
+    import NodeElement._
+    getEntity(url)
+  }
+
+  def getEntity[E<:Entity[E]](url: String)(implicit neo: NEP, b:EntityBuilder[E], ec:ExecutionContext): Future[E] =
     neo.request(Left(url)) acceptJson() get() map {
       withNotHandledStatus(Seq(200)) {
-        case jo:JsObject => Node(jo)
+        case jo:JsObject => b(jo, Seq.empty)
       }
     }
 
