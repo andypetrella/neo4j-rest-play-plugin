@@ -109,9 +109,7 @@ trait RootElement { self: Neo4JElement =>
     } yield x
   }
 
-  def createReqaltion(r: Relation)(implicit neo: NEP, ec:ExecutionContext): Future[Relation] = {
-    val holder: WSRequestHolder = neo.request(Left(_node)) acceptJson()
-
+  def createRelationship(r: Relation)(implicit neo: NEP, ec:ExecutionContext): Future[Relation] = {
     for {
       start <-  r.start;
       rel   <-  start.createRelationship(r)
@@ -121,13 +119,16 @@ trait RootElement { self: Neo4JElement =>
 
   def byUniqueIndex[E<:Entity[E]](index:Index)(implicit neo:NEP, builder:EntityBuilder[E], ec:ExecutionContext):JsValue => Future[Option[E]] =
     jsValue =>
-      neo.request(Left(_nodeIndex + "/" + index.name + "/" + index.key + "/" + jsToString(jsValue))) acceptJson() get() map {
-        withNotHandledStatus(Seq(200)) {
-          case jo: JsObject => Some(builder(jo, Seq()))
-          case ja: JsArray => ja.value match {
-            case Nil => None
-            case (a: JsObject) :: Nil => Some(builder(a, Seq()))
-            case x => throw new IllegalArgumentException("Get Unique Entity must return a JsObject or a singleton array and not " + x)
+      {
+        val crapCheck = if (builder == NodeElement.NodeBuilder) _nodeIndex else _relationshipIndex
+        neo.request(Left(crapCheck + "/" + index.name + "/" + index.key + "/" + jsToString(jsValue))) acceptJson() get() map {
+          withNotHandledStatus(Seq(200)) {
+            case jo: JsObject => Some(builder(jo, Seq()))
+            case ja: JsArray => ja.value match {
+              case Nil => None
+              case (a: JsObject) :: Nil => Some(builder(a, Seq()))
+              case x => throw new IllegalArgumentException("Get Unique Entity must return a JsObject or a singleton array and not " + x)
+            }
           }
         }
       }
