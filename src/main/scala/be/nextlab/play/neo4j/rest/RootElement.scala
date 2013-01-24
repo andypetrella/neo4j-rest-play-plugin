@@ -109,6 +109,15 @@ trait RootElement { self: Neo4JElement =>
     } yield x
   }
 
+  def createReqaltion(r: Relation)(implicit neo: NEP, ec:ExecutionContext): Future[Relation] = {
+    val holder: WSRequestHolder = neo.request(Left(_node)) acceptJson()
+
+    for {
+      start <-  r.start;
+      rel   <-  start.createRelationship(r)
+    } yield rel
+  }
+
 
   def byUniqueIndex[E<:Entity[E]](index:Index)(implicit neo:NEP, builder:EntityBuilder[E], ec:ExecutionContext):JsValue => Future[Option[E]] =
     jsValue =>

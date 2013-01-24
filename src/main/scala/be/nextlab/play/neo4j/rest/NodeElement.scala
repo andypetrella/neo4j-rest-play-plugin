@@ -44,15 +44,18 @@ trait NodeElement {
   lazy val _createRelationship = (jsValue \ "create_relationship").as[String]
 
   def createRelationship(r: Relation)(implicit neo: NEP, ec:ExecutionContext):Future[Relation] =
-    neo.request(Left(_createRelationship)) acceptJson() post (JsObject(Seq(
-      "to" -> JsString(r._end),
-      "type" -> JsString(r.rtype),
-      "data" -> r.data
-    ))) map {
-      withNotHandledStatus(Seq(201)) {
-        case o: JsObject => Relation(o, r.indexes)
-      }
-    }
+    for {
+      rel <-  neo.request(Left(_createRelationship)) acceptJson() post (JsObject(Seq(
+                "to" -> JsString(r._end),
+                "type" -> JsString(r.rtype),
+                "data" -> r.data
+              ))) map {
+                withNotHandledStatus(Seq(201)) {
+                  case o: JsObject => Relation(o, r.indexes)
+                }
+              }
+      x   <- rel.applyIndexes
+    } yield x
 
   lazy val _allRelationships = (jsValue \ "all_relationships").as[String]
   def allRelationships(implicit neo: NEP, ec:ExecutionContext):Future[Seq[Relation]] =
