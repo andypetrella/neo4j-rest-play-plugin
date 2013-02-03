@@ -6,7 +6,7 @@ import Keys._
 object MinimalBuild extends Build {
   val SNAPSHOT = "-SNAPSHOT"
 
-  lazy val buildVersion =  "0.0.4" + SNAPSHOT
+  lazy val buildVersion =  "0.0.5" + SNAPSHOT
 
   val scalazVersionNumber = "7.0.0-M7"
   val scalaz = "org.scalaz" %% "scalaz-core" % scalazVersionNumber
