@@ -35,6 +35,55 @@ object Queries {
       } yield n
 }
 
+case class CQ() {
+  import Start._
+
+  def start(v:String) = new {
+    def :=(s:Start) = StartingWith(v, s)
+  }
+
+}
+case class Q(s:StartingWith, r:Return)
+
+case class StartingWith(v:String, s:Start) {
+  def retrn(r:Return) = Q(this, r)
+}
+
+//Starting points in the graph, obtained via index lookups or by element IDs.
+case class Start(s:StartClause) {
+  def matching:Option[Match] = None
+}
+object Start {
+  def node(ids:Int*) = Start(NodeByIds(ids:_*))
+  def node = new {
+    def ~(i:IndexNodeClause) = Start(i)
+  }
+}
+trait StartClause
+case class NodeByIds(seq:Int*) extends StartClause
+case class IndexNodeClause(name:String, ss:Seq[(String,String)]) extends StartClause
+case class IndexNode(name:String) {
+  def apply(ss:Seq[(String,String)]):IndexNodeClause = IndexNodeClause(name, ss)
+}
+
+//The graph pattern to match, bound to the starting points in START.
+trait Match
+// Filtering criteria.
+trait Where
+// What to return.
+trait Return
+case class Var(v:String) extends Return
+// Creates nodes and relationships.
+trait Create
+// Removes nodes, relationships and properties.
+trait Delete
+// Set values to properties.
+trait Set
+// Performs updating actions once per element in a list.
+trait Foreach
+//Divides a query into multiple, distinct parts.
+trait With
+
 case class Service19M04(
   protocol: Protocol,
   host: String,
