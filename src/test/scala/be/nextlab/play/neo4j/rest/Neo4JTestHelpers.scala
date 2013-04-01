@@ -5,6 +5,9 @@ import play.api.test.Helpers._
 import org.specs2.execute.Result
 import org.specs2.specification.Around
 
+import scala.concurrent.ExecutionContext
+import scala.concurrent.ExecutionContext.Implicits.global
+
 /**
  *
  * User: noootsab
@@ -22,9 +25,21 @@ object Neo4JTestHelpers {
     def around[T <% Result](t: => T) = {
       val app: FakeApplication = fakeApp
       running(app) {
-        t
+        val result = t
+        cleaned
+        result
       }
     }
+    def cleaned(implicit ex:ExecutionContext) =
+      await((for {
+        r <- endPoint.root
+        ref <- r.referenceNode
+        //l <- r.cypher(Cypher("start r=relationship(*) delete r"))
+        n <- r.cypher(Cypher(s"start n=node(*) match n-[r?]-() where not(id(n) = ${ref.id}) delete n,r"))
+      } yield ()).map{ _ => println("database has been cleaned")}.recover {
+        case x => println("Failed to clean the database : " + x)
+      })
+
   }
 
 }

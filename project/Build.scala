@@ -6,7 +6,7 @@ import Keys._
 object MinimalBuild extends Build {
   val SNAPSHOT = "-SNAPSHOT"
 
-  lazy val buildVersion =  "0.0.4" + SNAPSHOT
+  lazy val buildVersion =  "0.0.5" + SNAPSHOT
 
   val scalazVersionNumber = "7.0.0-M7"
   val scalaz = "org.scalaz" %% "scalaz-core" % scalazVersionNumber
@@ -14,7 +14,7 @@ object MinimalBuild extends Build {
   val akkaz = "akkaz" %% "akkaz" % "0.0.1"
 
 
-  val neo4jVersion                  = "1.9.M03"
+  val neo4jVersion                  = "1.9.M05"
   lazy val neo4j                    = "org.neo4j.app" % "neo4j-server" % neo4jVersion % "test" classifier "static-web" classifier ""
   lazy val neo4jkernel              = "org.neo4j" % "neo4j-kernel" % neo4jVersion % "test"  classifier "tests" classifier ""
   lazy val jerseyForNeo4J           = "com.sun.jersey" % "jersey-core" % "1.9" % "test"

@@ -59,6 +59,21 @@ object Node {
 
 case class Relation(jsValue: JsObject, indexes: Seq[Index] = Nil) extends RelationElement with Entity[Relation]
 object Relation {
+  sealed trait Orientation {
+    def c(rel:String, v:Option[String]=None) =  {
+      val ends = this match {
+                  case Relation.In => ("<-", "-")
+                  case Relation.Out => ("-", "->")
+                  case Relation.Both => ("-", "-")
+              }
+      s""" ${ends._1}[${v.getOrElse("")}:$rel]${ends._2} """
+    }
+  }
+  case object In    extends Orientation
+  case object Out   extends Orientation
+  case object Both  extends Orientation
+
+
   def apply(start: Either[String, Node], end: Either[String, Node], rtype: String, indexes: Seq[Index], data: (String, JsValue)*): Relation =
     Relation(
       jsValue = JsObject(
@@ -179,7 +194,7 @@ object Neo4JElement {
       } else {
         js match {
           case jo: JsObject => throw Failure.badStatus(jo, expected, resp.status)
-          case _ => throw new IllegalStateException("Request with status ("+resp.status+") must return a JsObject")
+          case _ => throw new IllegalStateException("Request with status ("+resp.status+") must return a JsObject but got: " + js)
         }
       }
     }

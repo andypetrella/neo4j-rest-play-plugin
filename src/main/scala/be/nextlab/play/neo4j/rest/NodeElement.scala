@@ -81,6 +81,13 @@ trait NodeElement {
       }
     }
 
+  def linkedBy(linkType:String, orientation:Relation.Orientation)(implicit neo:NEP, ec:ExecutionContext):Future[Seq[JsObject]] =
+    for {
+      root    <- neo.root
+      linked  <- root.cypher(Cypher(s""" start n=node(${this.id}) match n${orientation.c(linkType)}t return t"""))
+    } yield linked("t").collect{case x:JsObject => x}
+
+
 
   def ++(other: Node)(implicit m: Monoid[Node]) = m append(this, other)
 
